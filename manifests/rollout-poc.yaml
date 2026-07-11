@@ -1,0 +1,95 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rollout-poc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rollout-stable
+  namespace: rollout-poc
+spec:
+  selector:
+    app: rollout-poc
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rollout-canary
+  namespace: rollout-poc
+spec:
+  selector:
+    app: rollout-poc
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: rollout-poc
+  namespace: rollout-poc
+spec:
+  hosts:
+    - rollout.harness.test
+  gateways:
+    - harness-system/harness-gateway
+  http:
+    - name: primary
+      route:
+        - destination:
+            host: rollout-stable
+          weight: 100
+        - destination:
+            host: rollout-canary
+          weight: 0
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: rollout-poc
+  namespace: rollout-poc
+spec:
+  replicas: 2
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app: rollout-poc
+  template:
+    metadata:
+      labels:
+        app: rollout-poc
+      annotations:
+        harness.test/revision: v1
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27.5-alpine
+          ports:
+            - name: http
+              containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 1
+  strategy:
+    canary:
+      stableService: rollout-stable
+      canaryService: rollout-canary
+      scaleDownDelaySeconds: 30
+      trafficRouting:
+        istio:
+          virtualService:
+            name: rollout-poc
+            routes:
+              - primary
+      steps:
+        - setWeight: 50
+        - pause:
+            duration: 20s

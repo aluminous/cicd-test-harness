@@ -1,0 +1,9 @@
+# Local Apple-Silicon compatibility image. The binary must be built from the
+# exact Istio 1.10.6 tag by the harness builder; amd64 CI uses the official
+# docker.io/istio/pilot:1.10.6 image instead.
+FROM scratch
+
+COPY --chown=1337:1337 pilot-discovery /usr/local/bin/pilot-discovery
+
+USER 1337:1337
+ENTRYPOINT ["/usr/local/bin/pilot-discovery"]

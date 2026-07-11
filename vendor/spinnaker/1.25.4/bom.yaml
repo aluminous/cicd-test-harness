@@ -1,0 +1,54 @@
+artifactSources:
+  debianRepository: "https://dl.bintray.com/spinnaker-releases/debians"
+  dockerRegistry: "us-docker.pkg.dev/spinnaker-community/docker"
+  gitPrefix: "https://github.com/spinnaker"
+  googleImageProject: "marketplace-spinnaker-release"
+dependencies:
+  "consul":
+    version: "0.7.5"
+  "redis":
+    version: "2:2.8.4-2"
+  "vault":
+    version: "0.7.0"
+services:
+  "clouddriver":
+    commit: "70ff0a97a8a8d782ef77b3c7afa31fa2aad13ff7"
+    version: "7.3.3-20210322155326"
+  "deck":
+    commit: "b3976665c7e4e6eab0347f543c0eed491085ce85"
+    version: "3.6.1-20210329201325"
+  "defaultArtifact":
+    commit: null
+    version: null
+  "echo":
+    commit: "6b1f6d66071df5389e72d5fa2e8b0c65e78f5251"
+    version: "2.16.0-20210208200018"
+  "fiat":
+    commit: "e8a17cbbb57951aabb483a5d35088bc10ba24590"
+    version: "1.15.0-20210211170021"
+  "front50":
+    commit: "9fd2fc75da57fd8c0f06ebdabf009a6c0d17d931"
+    version: "0.26.2-20210216140019"
+  "gate":
+    commit: "99362e3478f9c44643360a2b9b285fcdb63a3fc6"
+    version: "1.21.0-20210215200018"
+  "igor":
+    commit: "718892962443bd2d61b0b9c66d30ce0b50df150a"
+    version: "1.15.0-20210208200018"
+  "kayenta":
+    commit: "7fd1ded37aadf280b28215191723afcf9a1f3db8"
+    version: "0.20.0-20210203140017"
+  "monitoring-daemon":
+    commit: "3af17444d06eb41b8fbf38f4e94cf42d9f14ec18"
+    version: "0.19.2-20210217024142"
+  "monitoring-third-party":
+    commit: "3af17444d06eb41b8fbf38f4e94cf42d9f14ec18"
+    version: "0.19.2-20210217024142"
+  "orca":
+    commit: "ccc9378f4c607e2a01d01b97da4430cd98ecda1d"
+    version: "2.19.0-20210209140018"
+  "rosco":
+    commit: "0a782e9c7dabf54fe1c594bb4a3b8755f467f6a9"
+    version: "0.24.0-20210210110018"
+timestamp: "2021-03-30 00:14:27"
+version: "1.25.4"

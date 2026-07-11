@@ -1,0 +1,134 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jenkins-harness-job
+  namespace: harness-system
+data:
+  config.xml: |
+    <?xml version='1.1' encoding='UTF-8'?>
+    <project>
+      <actions/>
+      <description>API-created harness boundary PoC: writable Git plus outbound callback</description>
+      <keepDependencies>false</keepDependencies>
+      <properties>
+        <hudson.model.ParametersDefinitionProperty>
+          <parameterDefinitions>
+            <hudson.model.StringParameterDefinition>
+              <name>REPO_URL</name>
+              <defaultValue/>
+              <trim>true</trim>
+            </hudson.model.StringParameterDefinition>
+            <hudson.model.StringParameterDefinition>
+              <name>REVISION</name>
+              <defaultValue/>
+              <trim>true</trim>
+            </hudson.model.StringParameterDefinition>
+            <hudson.model.StringParameterDefinition>
+              <name>CALLBACK_URL</name>
+              <defaultValue/>
+              <trim>true</trim>
+            </hudson.model.StringParameterDefinition>
+          </parameterDefinitions>
+        </hudson.model.ParametersDefinitionProperty>
+      </properties>
+      <scm class="hudson.scm.NullSCM"/>
+      <canRoam>true</canRoam>
+      <disabled>false</disabled>
+      <blockBuildWhenDownstreamBuilding>false</blockBuildWhenDownstreamBuilding>
+      <blockBuildWhenUpstreamBuilding>false</blockBuildWhenUpstreamBuilding>
+      <triggers/>
+      <concurrentBuild>false</concurrentBuild>
+      <builders>
+        <hudson.tasks.Shell>
+          <command>set -eu
+    test -n "$REPO_URL"
+    test -n "$REVISION"
+    test -n "$CALLBACK_URL"
+    work="$(mktemp -d)"
+    trap 'rm -rf "$work"' EXIT
+    authenticated_url="http://harness:harness-password@${REPO_URL#http://}"
+    git clone "$authenticated_url" "$work/repository"
+    cd "$work/repository"
+    git config user.name Harness-Jenkins
+    git config user.email jenkins@harness.invalid
+    printf '%s\n' "$REVISION" > jenkins-proof.txt
+    git add jenkins-proof.txt
+    git commit -m "Jenkins proof $REVISION"
+    git push origin HEAD:main
+    curl --fail --silent --show-error \
+      -H 'Content-Type: application/json' \
+      -d "{\"revision\":\"$REVISION\",\"job\":\"harness-poc\"}" \
+      "$CALLBACK_URL"
+    </command>
+        </hudson.tasks.Shell>
+      </builders>
+      <publishers/>
+      <buildWrappers/>
+    </project>
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jenkins
+  namespace: harness-system
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: jenkins
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: jenkins
+    spec:
+      containers:
+        - name: jenkins
+          image: docker.io/jenkins/jenkins:2.426.1-lts-jdk17
+          env:
+            - name: JAVA_OPTS
+              value: >-
+                -Djenkins.install.runSetupWizard=false
+                -Dhudson.security.csrf.GlobalCrumbIssuerConfiguration.DISABLE_CSRF_PROTECTION=true
+                -Xms128m -Xmx512m -Xss512k -XX:MaxMetaspaceSize=256m
+          ports:
+            - name: http
+              containerPort: 8080
+          resources:
+            requests:
+              cpu: 25m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /login
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 3
+            failureThreshold: 120
+          volumeMounts:
+            - name: home
+              mountPath: /var/jenkins_home
+            - name: job
+              mountPath: /usr/share/jenkins/ref/jobs/harness-poc
+      volumes:
+        - name: home
+          emptyDir: {}
+        - name: job
+          configMap:
+            name: jenkins-harness-job
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jenkins
+  namespace: harness-system
+spec:
+  selector:
+    app.kubernetes.io/name: jenkins
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

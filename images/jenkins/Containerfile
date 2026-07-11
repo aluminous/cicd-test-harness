@@ -1,0 +1,5 @@
+ARG JENKINS_BASE_IMAGE=docker.io/jenkins/jenkins:2.426.1-lts-jdk17
+FROM ${JENKINS_BASE_IMAGE}
+
+COPY --chown=jenkins:jenkins plugins.txt /usr/share/jenkins/ref/plugins.txt
+RUN jenkins-plugin-cli --plugin-file /usr/share/jenkins/ref/plugins.txt --latest=false

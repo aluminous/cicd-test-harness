@@ -1,0 +1,53 @@
+name: modern
+
+runtime:
+  provider: podman
+  memory_budget_mib: 8192
+
+kind:
+  version: 0.31.0
+  binary: .tools/bin/kind-v0.31.0
+  node_image: kindest/node:v1.31.14@sha256:6f86cf509dbb42767b6e79debc3f2c32e4ee01386f0489b3b2be24b0a55aac2b
+  cluster_name: cicd-poc-modern
+
+argo_rollouts:
+  version: 1.8.3
+  install_manifest: vendor/argo-rollouts/1.8.3/install.yaml
+  notifications_manifest: vendor/argo-rollouts/1.8.3/notifications-install.yaml
+
+istio:
+  version: 1.25.5
+  chart_directory: vendor/istio/1.25.5
+  gateway:
+    name: harness-gateway
+    namespace: harness-system
+    hosts: ["*.harness.test"]
+
+infra:
+  gitea:
+    image: docker.gitea.com/gitea:1.26.4-rootless
+  wiremock:
+    image: wiremock/wiremock:3.13.1
+
+spinnaker:
+  version: 1.25.4
+  enabled: true
+  rosco_enabled: true
+  manifest: manifests/spinnaker-poc.yaml
+  images:
+    gate: us-docker.pkg.dev/spinnaker-community/docker/gate:1.21.0-20210215200018
+    front50: us-docker.pkg.dev/spinnaker-community/docker/front50:0.26.2-20210216140019
+    orca: us-docker.pkg.dev/spinnaker-community/docker/orca:2.19.0-20210209140018
+    clouddriver: us-docker.pkg.dev/spinnaker-community/docker/clouddriver:7.3.3-20210322155326
+    rosco: us-docker.pkg.dev/spinnaker-community/docker/rosco:0.24.0-20210210110018
+    redis: redis:7.2.7-alpine
+    minio: docker.io/minio/minio:RELEASE.2024-10-29T16-01-48Z
+
+jenkins:
+  version: 2.426.1
+  enabled: true
+  manifest: manifests/jenkins-poc.yaml
+  image: localhost/cicd-harness/jenkins:2.426.1-pipeline
+  base_image: docker.io/jenkins/jenkins:2.426.1-lts-jdk17
+  containerfile: images/jenkins/Containerfile
+  plugins_file: images/jenkins/plugins.txt

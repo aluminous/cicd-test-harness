@@ -1,0 +1,29 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: spin-kustomize
+  namespace: spinnaker-poc
+spec:
+  replicas: 2
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app: spin-kustomize
+  template:
+    metadata:
+      labels:
+        app: spin-kustomize
+    spec:
+      containers:
+        - name: app
+          image: nginx:1.27-alpine
+          ports:
+            - name: http
+              containerPort: 80
+  strategy:
+    canary:
+      steps:
+        - setWeight: 50
+        - pause:
+            duration: 5s
+

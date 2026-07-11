@@ -1,0 +1,11 @@
+@Library('example') _
+
+node {
+    stage('Checkout application branch') {
+        checkout scm
+    }
+    stage('Run shared library') {
+        exampleBuild()
+    }
+    echo 'JENKINSFILE_EXECUTED'
+}

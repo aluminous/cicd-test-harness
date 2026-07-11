@@ -1,0 +1,87 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: spin-raw-stable
+  namespace: spinnaker-poc
+spec:
+  selector:
+    app: spin-raw
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spin-raw-canary
+  namespace: spinnaker-poc
+spec:
+  selector:
+    app: spin-raw
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: spin-raw
+  namespace: spinnaker-poc
+spec:
+  gateways:
+    - harness-system/harness-gateway
+  hosts:
+    - spin-raw.harness.test
+  http:
+    - name: primary
+      route:
+        - destination:
+            host: spin-raw-stable
+          weight: 100
+        - destination:
+            host: spin-raw-canary
+          weight: 0
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: spin-raw
+  namespace: spinnaker-poc
+  annotations:
+    harness.cicd/revision: raw-v3
+spec:
+  replicas: 2
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app: spin-raw
+  template:
+    metadata:
+      annotations:
+        harness.cicd/revision: raw-v3
+      labels:
+        app: spin-raw
+    spec:
+      containers:
+        - name: app
+          image: nginx:1.27-alpine
+          ports:
+            - name: http
+              containerPort: 80
+  strategy:
+    canary:
+      stableService: spin-raw-stable
+      canaryService: spin-raw-canary
+      scaleDownDelaySeconds: 60
+      trafficRouting:
+        istio:
+          virtualService:
+            name: spin-raw
+            routes:
+              - primary
+      steps:
+        - setWeight: 50
+        - pause:
+            duration: 30s

@@ -1,0 +1,62 @@
+name: legacy
+
+runtime:
+  # Kubernetes 1.21 requires a rootful Podman connection (or Docker/DinD).
+  provider: podman
+  memory_budget_mib: 8192
+
+kind:
+  version: 0.17.0
+  binary: .tools/bin/kind-v0.17.0
+  node_image: kindest/node:v1.21.14@sha256:9d9eb5fb26b4fbc0c6d95fa8c790414f9750dd583f5d7cee45d92e8c26670aa1
+  cluster_name: cicd-poc-legacy
+
+argo_rollouts:
+  version: 1.4.1
+  install_manifest: vendor/argo-rollouts/1.4.1/install.yaml
+  notifications_manifest: vendor/argo-rollouts/1.4.1/notifications-install.yaml
+
+istio:
+  version: 1.10.6
+  chart_directory: vendor/istio/1.10.6
+  arm64_pilot:
+    image: localhost/istio/pilot:1.10.6-arm64-poc
+    builder_image: docker.io/library/golang@sha256:79e277312aa1ba8dce542a30260fea7f797c4aaf264300a7d56683aa25e4fc16
+    source_url: https://github.com/istio/istio/archive/refs/tags/1.10.6.tar.gz
+    source_sha256: c737648a6dc6b4bb3a5ac1dfc202469ced73e54c83cc591db917120c5590aae4
+    git_revision: fd053c6165d21105d66dac6e3d0649db2dde5b86
+    containerfile: images/istio-pilot-arm64/Containerfile
+    gateway_stub_image: registry.k8s.io/pause:3.9
+  gateway:
+    name: harness-gateway
+    namespace: harness-system
+    hosts: ["*.harness.test"]
+
+infra:
+  gitea:
+    image: docker.gitea.com/gitea:1.26.4-rootless
+  wiremock:
+    image: wiremock/wiremock:3.13.1
+
+spinnaker:
+  version: 1.25.4
+  enabled: true
+  rosco_enabled: true
+  manifest: manifests/spinnaker-poc.yaml
+  images:
+    gate: us-docker.pkg.dev/spinnaker-community/docker/gate:1.21.0-20210215200018
+    front50: us-docker.pkg.dev/spinnaker-community/docker/front50:0.26.2-20210216140019
+    orca: us-docker.pkg.dev/spinnaker-community/docker/orca:2.19.0-20210209140018
+    clouddriver: us-docker.pkg.dev/spinnaker-community/docker/clouddriver:7.3.3-20210322155326
+    rosco: us-docker.pkg.dev/spinnaker-community/docker/rosco:0.24.0-20210210110018
+    redis: redis:7.2.7-alpine
+    minio: docker.io/minio/minio:RELEASE.2024-10-29T16-01-48Z
+
+jenkins:
+  version: 2.426.1
+  enabled: true
+  manifest: manifests/jenkins-poc.yaml
+  image: localhost/cicd-harness/jenkins:2.426.1-pipeline
+  base_image: docker.io/jenkins/jenkins:2.426.1-lts-jdk17
+  containerfile: images/jenkins/Containerfile
+  plugins_file: images/jenkins/plugins.txt

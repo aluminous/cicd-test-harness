@@ -1,0 +1,628 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spinnaker
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spinnaker-poc
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: clouddriver
+  namespace: spinnaker
+---
+# This is intentionally broad for the disposable PoC cluster. The harness will
+# narrow it to the test namespace once all resource kinds used by the backend
+# are known.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: spinnaker-poc-clouddriver
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: clouddriver
+    namespace: spinnaker
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spinnaker-config
+  namespace: spinnaker
+data:
+  gate-local.yml: |
+    services:
+      redis:
+        baseUrl: redis://spin-redis.spinnaker.svc.cluster.local:6379
+      orca:
+        baseUrl: http://spin-orca.spinnaker.svc.cluster.local:8083
+      front50:
+        baseUrl: http://spin-front50.spinnaker.svc.cluster.local:8080
+      clouddriver:
+        baseUrl: http://spin-clouddriver.spinnaker.svc.cluster.local:7002
+      rosco:
+        enabled: true
+        baseUrl: http://spin-rosco.spinnaker.svc.cluster.local:8087
+      echo:
+        enabled: false
+      keel:
+        enabled: false
+      fiat:
+        enabled: false
+        baseUrl: http://fiat-disabled.spinnaker.svc.cluster.local:7003
+      igor:
+        enabled: false
+      kayenta:
+        enabled: false
+
+  front50-local.yml: |
+    services:
+      fiat:
+        enabled: false
+        baseUrl: http://fiat-disabled.spinnaker.svc.cluster.local:7003
+    fiat:
+      enabled: false
+    # Front50 defaults to roughly 200 cache threads. Two workers per object
+    # type are ample for an ephemeral harness and substantially reduce native
+    # thread-stack memory.
+    storage-service:
+      application: {threadPool: 2, shouldWarmCache: false}
+      applicationPermission: {threadPool: 2, shouldWarmCache: false}
+      serviceAccount: {threadPool: 2, shouldWarmCache: false}
+      project: {threadPool: 2, shouldWarmCache: false}
+      notification: {threadPool: 2, shouldWarmCache: false}
+      pipelineStrategy: {threadPool: 2, shouldWarmCache: false}
+      pipeline: {threadPool: 2, shouldWarmCache: false}
+      pipelineTemplate: {threadPool: 2, shouldWarmCache: false}
+      snapshot: {threadPool: 2, shouldWarmCache: false}
+      deliveryConfig: {threadPool: 2, shouldWarmCache: false}
+      pluginInfo: {threadPool: 2, shouldWarmCache: false}
+      entityTags: {threadPool: 2, shouldWarmCache: false}
+    spinnaker:
+      redis:
+        enabled: false
+      s3:
+        enabled: true
+        bucket: spinnaker-front50
+        endpoint: http://spin-minio.spinnaker.svc.cluster.local:9000
+        region: us-east-1
+        regionOverride: us-east-1
+        pathStyleAccess: true
+        versioning: false
+        rootFolder: front50
+        eventing:
+          enabled: false
+
+  orca-local.yml: |
+    services:
+      redis:
+        baseUrl: redis://spin-redis.spinnaker.svc.cluster.local:6379
+      front50:
+        baseUrl: http://spin-front50.spinnaker.svc.cluster.local:8080
+      clouddriver:
+        baseUrl: http://spin-clouddriver.spinnaker.svc.cluster.local:7002
+      rosco:
+        enabled: true
+        baseUrl: http://spin-rosco.spinnaker.svc.cluster.local:8087
+      echo:
+        enabled: false
+      igor:
+        enabled: false
+      kayenta:
+        enabled: false
+      fiat:
+        enabled: false
+        baseUrl: http://fiat-disabled.spinnaker.svc.cluster.local:7003
+    echo:
+      enabled: false
+    igor:
+      enabled: false
+    fiat:
+      enabled: false
+    bakery:
+      enabled: true
+      baseUrl: http://spin-rosco.spinnaker.svc.cluster.local:8087
+
+  clouddriver-local.yml: |
+    services:
+      redis:
+        baseUrl: redis://spin-redis.spinnaker.svc.cluster.local:6379
+      front50:
+        baseUrl: http://spin-front50.spinnaker.svc.cluster.local:8080
+      fiat:
+        enabled: false
+        baseUrl: http://fiat-disabled.spinnaker.svc.cluster.local:7003
+    redis:
+      enabled: true
+      connection: redis://spin-redis.spinnaker.svc.cluster.local:6379
+      cache:
+        enabled: true
+      scheduler:
+        enabled: true
+      taskRepository:
+        enabled: true
+    sql:
+      enabled: false
+    fiat:
+      enabled: false
+    kubernetes:
+      enabled: true
+      primaryAccount: poc
+      accounts:
+        - name: poc
+          environment: test
+          accountType: test
+          providerVersion: V2
+          kubeconfigFile: /opt/spinnaker/kubeconfig/config
+          # Test namespaces are created dynamically by the pytest fixture. Do not
+          # constrain this account to the legacy fixed spinnaker-poc namespace.
+          # The disposable cluster's RBAC is already cluster-wide, while `kinds`
+          # below bounds Clouddriver's relationship cache.
+          cacheThreads: 1
+          cacheIntervalSeconds: 15
+          checkPermissionsOnStartup: false
+          onlySpinnakerManaged: false
+          metrics: false
+          requiredGroupMembership: []
+          permissions: {}
+          dockerRegistries: []
+          configureImagePullSecrets: false
+          # Avoid the default cluster-wide cache of every core Kubernetes kind.
+          # The deployer can still submit arbitrary manifests; this list only
+          # limits the relationship/stability cache needed by this PoC.
+          kinds:
+            - namespace
+            - pod
+            - replicaSet
+            - service
+            - Rollout.argoproj.io
+            - VirtualService.networking.istio.io
+          customResources: []
+          cachingPolicies: []
+    artifacts:
+      http:
+        enabled: true
+        accounts: []
+      git-repo:
+        enabled: true
+        accounts:
+          - name: gitea
+            username: harness
+            password: harness-password
+            sshTrustUnknownHosts: true
+
+  rosco-local.yml: |
+    services:
+      redis:
+        baseUrl: redis://spin-redis.spinnaker.svc.cluster.local:6379
+      clouddriver:
+        baseUrl: http://spin-clouddriver.spinnaker.svc.cluster.local:7002
+    redis:
+      connection: redis://spin-redis.spinnaker.svc.cluster.local:6379
+
+  kubeconfig: |
+    apiVersion: v1
+    kind: Config
+    clusters:
+      - name: in-cluster
+        cluster:
+          server: https://kubernetes.default.svc
+          certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    users:
+      - name: clouddriver
+        user:
+          tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    contexts:
+      - name: in-cluster
+        context:
+          cluster: in-cluster
+          user: clouddriver
+          namespace: spinnaker-poc
+    current-context: in-cluster
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spin-redis
+  namespace: spinnaker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spin-redis
+  template:
+    metadata:
+      labels:
+        app: spin-redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.2.7-alpine
+          args: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb"]
+          ports:
+            - containerPort: 6379
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 160Mi
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            periodSeconds: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spin-redis
+  namespace: spinnaker
+spec:
+  selector:
+    app: spin-redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spin-minio
+  namespace: spinnaker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spin-minio
+  template:
+    metadata:
+      labels:
+        app: spin-minio
+    spec:
+      containers:
+        - name: minio
+          image: docker.io/minio/minio:RELEASE.2024-10-29T16-01-48Z
+          args: ["server", "/data"]
+          env:
+            - name: MINIO_ROOT_USER
+              value: harness-minio
+            - name: MINIO_ROOT_PASSWORD
+              value: harness-minio-password
+          ports:
+            - containerPort: 9000
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 192Mi
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: 9000
+            periodSeconds: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spin-minio
+  namespace: spinnaker
+spec:
+  selector:
+    app: spin-minio
+  ports:
+    - port: 9000
+      targetPort: 9000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spin-front50
+  namespace: spinnaker
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: spin-front50
+  template:
+    metadata:
+      labels:
+        app: spin-front50
+    spec:
+      containers:
+        - name: front50
+          image: us-docker.pkg.dev/spinnaker-community/docker/front50:0.26.2-20210216140019
+          imagePullPolicy: Never
+          env:
+            - name: JAVA_OPTS
+              value: -Xms96m -Xmx256m -Xss512k -XX:MaxMetaspaceSize=160m
+            - name: AWS_ACCESS_KEY_ID
+              value: harness-minio
+            - name: AWS_SECRET_ACCESS_KEY
+              value: harness-minio-password
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: 25m
+              memory: 192Mi
+            limits:
+              memory: 768Mi
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 60
+          volumeMounts:
+            - name: config
+              mountPath: /opt/spinnaker/config/front50-local.yml
+              subPath: front50-local.yml
+      volumes:
+        - name: config
+          configMap:
+            name: spinnaker-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spin-front50
+  namespace: spinnaker
+spec:
+  selector:
+    app: spin-front50
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spin-rosco
+  namespace: spinnaker
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: spin-rosco
+  template:
+    metadata:
+      labels:
+        app: spin-rosco
+    spec:
+      containers:
+        - name: rosco
+          image: us-docker.pkg.dev/spinnaker-community/docker/rosco:0.24.0-20210210110018
+          imagePullPolicy: Never
+          env:
+            - name: JAVA_OPTS
+              value: -Xms96m -Xmx320m -Xss512k -XX:MaxMetaspaceSize=192m
+          ports:
+            - containerPort: 8087
+          resources:
+            requests:
+              cpu: 25m
+              memory: 256Mi
+            limits:
+              # Kustomize runs as a child process alongside the JVM. The
+              # service idles far below this, but needs headroom while baking.
+              memory: 768Mi
+          readinessProbe:
+            tcpSocket:
+              port: 8087
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 60
+          volumeMounts:
+            - name: config
+              mountPath: /opt/spinnaker/config/rosco-local.yml
+              subPath: rosco-local.yml
+      volumes:
+        - name: config
+          configMap:
+            name: spinnaker-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spin-rosco
+  namespace: spinnaker
+spec:
+  selector:
+    app: spin-rosco
+  ports:
+    - port: 8087
+      targetPort: 8087
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spin-clouddriver
+  namespace: spinnaker
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: spin-clouddriver
+  template:
+    metadata:
+      labels:
+        app: spin-clouddriver
+    spec:
+      serviceAccountName: clouddriver
+      containers:
+        - name: clouddriver
+          image: us-docker.pkg.dev/spinnaker-community/docker/clouddriver:7.3.3-20210322155326
+          imagePullPolicy: Never
+          env:
+            - name: JAVA_OPTS
+              value: -Xms192m -Xmx640m -XX:MaxMetaspaceSize=256m
+          ports:
+            - containerPort: 7002
+          resources:
+            requests:
+              cpu: 50m
+              memory: 512Mi
+            limits:
+              memory: 1280Mi
+          readinessProbe:
+            tcpSocket:
+              port: 7002
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            failureThreshold: 90
+          volumeMounts:
+            - name: config
+              mountPath: /opt/spinnaker/config/clouddriver-local.yml
+              subPath: clouddriver-local.yml
+            - name: config
+              mountPath: /opt/spinnaker/kubeconfig/config
+              subPath: kubeconfig
+      volumes:
+        - name: config
+          configMap:
+            name: spinnaker-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spin-clouddriver
+  namespace: spinnaker
+spec:
+  selector:
+    app: spin-clouddriver
+  ports:
+    - port: 7002
+      targetPort: 7002
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spin-orca
+  namespace: spinnaker
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: spin-orca
+  template:
+    metadata:
+      labels:
+        app: spin-orca
+    spec:
+      containers:
+        - name: orca
+          image: us-docker.pkg.dev/spinnaker-community/docker/orca:2.19.0-20210209140018
+          imagePullPolicy: Never
+          env:
+            - name: JAVA_OPTS
+              value: -Xms128m -Xmx448m -Xss512k -XX:MaxMetaspaceSize=224m
+          ports:
+            - containerPort: 8083
+          resources:
+            requests:
+              cpu: 50m
+              memory: 384Mi
+            limits:
+              memory: 896Mi
+          readinessProbe:
+            tcpSocket:
+              port: 8083
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            failureThreshold: 90
+          volumeMounts:
+            - name: config
+              mountPath: /opt/spinnaker/config/orca-local.yml
+              subPath: orca-local.yml
+      volumes:
+        - name: config
+          configMap:
+            name: spinnaker-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spin-orca
+  namespace: spinnaker
+spec:
+  selector:
+    app: spin-orca
+  ports:
+    - port: 8083
+      targetPort: 8083
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spin-gate
+  namespace: spinnaker
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: spin-gate
+  template:
+    metadata:
+      labels:
+        app: spin-gate
+    spec:
+      containers:
+        - name: gate
+          image: us-docker.pkg.dev/spinnaker-community/docker/gate:1.21.0-20210215200018
+          imagePullPolicy: Never
+          env:
+            - name: JAVA_OPTS
+              value: -Xms96m -Xmx288m -Xss512k -XX:MaxMetaspaceSize=192m
+          ports:
+            - containerPort: 8084
+          resources:
+            requests:
+              cpu: 25m
+              memory: 192Mi
+            limits:
+              # Gate briefly allocates above its steady-state footprint while
+              # serializing an Orca execution request.
+              memory: 768Mi
+          readinessProbe:
+            tcpSocket:
+              port: 8084
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 60
+          volumeMounts:
+            - name: config
+              mountPath: /opt/spinnaker/config/gate-local.yml
+              subPath: gate-local.yml
+      volumes:
+        - name: config
+          configMap:
+            name: spinnaker-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spin-gate
+  namespace: spinnaker
+spec:
+  selector:
+    app: spin-gate
+  ports:
+    - port: 8084
+      targetPort: 8084
