@@ -1,5 +1,8 @@
 # CI/CD test harness
 
+[English](https://github.com/aluminous/cicd-test-harness/blob/main/README.md) |
+[한국어](https://github.com/aluminous/cicd-test-harness/blob/main/README.ko.md)
+
 > **Alpha preview:** the tested workflows are functional, but public APIs and profile
 > structure may change before `1.0`. The supplied infrastructure is intentionally
 > disposable and is not suitable for production or shared clusters.

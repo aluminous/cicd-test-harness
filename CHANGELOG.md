@@ -18,4 +18,6 @@ Initial public preview:
 - reproducible Docker/Podman build and manual GHCR publication for the exact-source
   Istio 1.10.6 ARM64 pilot compatibility image; and
 - contributor, security, third-party licensing, environment-doctor, and fast CI
-  documentation suitable for an initial OSS preview.
+  documentation suitable for an initial OSS preview;
+- complete English and Korean project readmes with matching operational and fidelity
+  guidance.
