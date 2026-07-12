@@ -51,7 +51,14 @@ The pinned inputs are:
 | Istio version | `1.10.6` |
 | Git revision | `fd053c6165d21105d66dac6e3d0649db2dde5b86` |
 | Source SHA-256 | `c737648a6dc6b4bb3a5ac1dfc202469ced73e54c83cc591db917120c5590aae4` |
+| Go builder, amd64 | `golang@sha256:35fa3cfd4ec01a520f6986535d8f70a5eeef2d40fb8019ff626da24989bdd4f1` |
+| Go builder, arm64 | `golang@sha256:79e277312aa1ba8dce542a30260fea7f797c4aaf264300a7d56683aa25e4fc16` |
 | Target | `linux/arm64` |
+
+The Go builder digests are platform manifests, not a multi-architecture index. The
+harness selects the host builder architecture while always setting `GOARCH=arm64` and
+building a `linux/arm64` output image. For a remote runtime whose architecture differs
+from the Python host, pass `--builder-platform linux/amd64` or `linux/arm64` explicitly.
 
 To use another registry, copy the legacy profile, change `istio.arm64_pilot.image`, and
 either build and push directly or set `pull_before_build: true` to try the prebuilt image
@@ -77,7 +84,8 @@ ghcr.io/aluminous/cicd-harness-istio-pilot:1.10.6-arm64-poc
 
 It uses the repository-scoped `GITHUB_TOKEN`, requests only `contents: read` and
 `packages: write`, invokes the same packaged builder with Docker, and validates the local
-image architecture before pushing. Run it with:
+image architecture before pushing. The amd64 runner cross-compiles the ARM64 binary
+without QEMU. Run it with:
 
 ```bash
 gh workflow run publish-arm64-image.yml \

@@ -146,6 +146,11 @@ def _main() -> None:
         choices=("docker", "podman"),
         help="override the profile container runtime",
     )
+    image_build_parser.add_argument(
+        "--builder-platform",
+        choices=("linux/amd64", "linux/arm64"),
+        help="override the platform used to run the pinned Go builder",
+    )
     image_build_parser.add_argument("--tag", help="override the output image reference")
     image_build_parser.add_argument("--force", action="store_true")
     image_build_parser.add_argument("--push", action="store_true")
@@ -179,7 +184,13 @@ def _main() -> None:
         registry = RegistrySupport(profile, runner)
         registry.install_runtime_auth(profile.runtime.provider)
         try:
-            builder = NativePilotBuilder(profile, native_pilot, runner, registry)
+            builder = NativePilotBuilder(
+                profile,
+                native_pilot,
+                runner,
+                registry,
+                builder_platform=args.builder_platform,
+            )
             image = builder.build(force=args.force)
             if args.push:
                 builder.push()

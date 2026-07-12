@@ -37,7 +37,12 @@ def test_pilot_image_build_is_explicitly_linux_arm64_and_runtime_portable() -> N
     )
     config = profile.istio.arm64_pilot
     assert config is not None
-    builder = NativePilotBuilder(profile, config, CommandRunner(cwd=workspace))
+    builder = NativePilotBuilder(
+        profile,
+        config,
+        CommandRunner(cwd=workspace),
+        builder_platform="linux/amd64",
+    )
 
     assert builder.build_command(Path("/tmp/context"))[:6] == [
         "docker",
@@ -47,6 +52,9 @@ def test_pilot_image_build_is_explicitly_linux_arm64_and_runtime_portable() -> N
         "linux/arm64",
         "-t",
     ]
+    assert builder.builder_image.endswith(
+        "@sha256:35fa3cfd4ec01a520f6986535d8f70a5eeef2d40fb8019ff626da24989bdd4f1"
+    )
 
 
 def test_pilot_build_stages_license_and_machine_readable_provenance(tmp_path: Path) -> None:
@@ -66,6 +74,7 @@ def test_pilot_build_stages_license_and_machine_readable_provenance(tmp_path: Pa
     assert metadata["target"] == "linux/arm64"
     assert metadata["version"] == "1.10.6"
     assert metadata["git_revision"] == config.git_revision
+    assert metadata["builder_platform"] in {"linux/amd64", "linux/arm64"}
     assert "no proxyv2" in metadata["fidelity"]
 
 

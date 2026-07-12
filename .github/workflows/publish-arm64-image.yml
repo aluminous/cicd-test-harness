@@ -41,7 +41,8 @@ jobs:
       - name: Build and push exact-source ARM64 pilot
         run: >-
           uv run cicd-harness image build legacy istio-pilot-arm64
-          --runtime docker --tag "$IMAGE" --force --push
+          --runtime docker --builder-platform linux/amd64
+          --tag "$IMAGE" --force --push
 
       - name: Verify image metadata
         run: |

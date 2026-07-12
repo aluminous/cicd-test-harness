@@ -26,7 +26,9 @@ istio:
   chart_directory: vendor/istio/1.10.6
   arm64_pilot:
     image: localhost/istio/pilot:1.10.6-arm64-poc
-    builder_image: docker.io/library/golang@sha256:79e277312aa1ba8dce542a30260fea7f797c4aaf264300a7d56683aa25e4fc16
+    builder_images:
+      linux/amd64: docker.io/library/golang@sha256:35fa3cfd4ec01a520f6986535d8f70a5eeef2d40fb8019ff626da24989bdd4f1
+      linux/arm64: docker.io/library/golang@sha256:79e277312aa1ba8dce542a30260fea7f797c4aaf264300a7d56683aa25e4fc16
     source_url: https://github.com/istio/istio/archive/refs/tags/1.10.6.tar.gz
     source_sha256: c737648a6dc6b4bb3a5ac1dfc202469ced73e54c83cc591db917120c5590aae4
     git_revision: fd053c6165d21105d66dac6e3d0649db2dde5b86

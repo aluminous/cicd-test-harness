@@ -24,12 +24,14 @@ class NativePilotBuilder:
         config: NativePilotConfig,
         runner: CommandRunner,
         registry: RegistrySupport | None = None,
+        builder_platform: str | None = None,
     ) -> None:
         self.profile = profile
         self.config = config
         self.runner = runner
         self.registry = registry or RegistrySupport(profile, runner)
         self.workspace = runner.cwd
+        self.builder_platform = builder_platform or self.host_builder_platform()
 
     @property
     def image(self) -> str:
@@ -38,6 +40,30 @@ class NativePilotBuilder:
     @staticmethod
     def host_needs_shim() -> bool:
         return platform.machine().lower() in {"arm64", "aarch64"}
+
+    @staticmethod
+    def host_builder_platform() -> str:
+        machine = platform.machine().lower()
+        architectures = {
+            "aarch64": "arm64",
+            "arm64": "arm64",
+            "amd64": "amd64",
+            "x86_64": "amd64",
+        }
+        try:
+            return f"linux/{architectures[machine]}"
+        except KeyError as exc:
+            raise HarnessError(f"unsupported pilot builder architecture: {machine}") from exc
+
+    @property
+    def builder_image(self) -> str:
+        try:
+            image = self.config.builder_images[self.builder_platform]
+        except KeyError as exc:
+            raise HarnessError(
+                f"no pilot builder image is pinned for {self.builder_platform}"
+            ) from exc
+        return self.registry.image(image)
 
     def prepare(self) -> None:
         if self.config.pull_before_build and not self._local_image_exists():
@@ -158,6 +184,8 @@ class NativePilotBuilder:
                 self.runtime,
                 "run",
                 "--rm",
+                "--platform",
+                self.builder_platform,
                 "--memory=5g",
                 "-v",
                 f"{source}:/src",
@@ -173,7 +201,7 @@ class NativePilotBuilder:
                 "GOOS=linux",
                 "-e",
                 "GOARCH=arm64",
-                self.registry.image(self.config.builder_image),
+                self.builder_image,
                 "sh",
                 "-c",
                 command,
@@ -189,6 +217,8 @@ class NativePilotBuilder:
             raise HarnessError("Istio source archive does not contain LICENSE")
         shutil.copyfile(license_path, output / "LICENSE")
         metadata = {
+            "builder_image": self.builder_image,
+            "builder_platform": self.builder_platform,
             "component": "istio/pilot-discovery",
             "fidelity": "pilot control plane only; no proxyv2 or ingress data plane",
             "git_revision": self.config.git_revision,

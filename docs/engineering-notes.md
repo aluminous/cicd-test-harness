@@ -153,6 +153,13 @@ The same builder is available from an installed package as
 the output ELF architecture, and embeds the upstream license and build metadata. The
 complete compatibility and GHCR publication contract is in `docs/arm64-compatibility.md`.
 
+Do not assume a digest copied from a multi-architecture tag identifies the tag's manifest
+list. The original Go 1.16.15 pin was the ARM64 platform manifest; Docker on an amd64
+GitHub runner pulled it correctly and then failed with `exec format error`. The profile
+now pins separate amd64 and arm64 builder manifests. The builder selects (or accepts an
+explicit override for) the platform used to run Go, while `GOARCH` and the output image
+remain ARM64.
+
 Missing-image bootstrap was also exercised from source through controller readiness and
 the canary assertion. With the Go builder image already present but empty Istio source
 and module caches, it completed in 117 seconds. The downloaded source and Go caches live

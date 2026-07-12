@@ -91,13 +91,24 @@ class GatewayConfig(StrictModel):
 
 class NativePilotConfig(StrictModel):
     image: str
-    builder_image: str
+    builder_images: dict[str, str]
     source_url: str
     source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     git_revision: str
     containerfile: Path
     gateway_stub_image: str = "registry.k8s.io/pause:3.9"
     pull_before_build: bool = False
+
+    @model_validator(mode="after")
+    def require_builder_platforms(self) -> NativePilotConfig:
+        required = {"linux/amd64", "linux/arm64"}
+        missing = required.difference(self.builder_images)
+        if missing:
+            raise ValueError(
+                "native pilot builder images are missing platforms: "
+                + ", ".join(sorted(missing))
+            )
+        return self
 
 
 class IstioConfig(StrictModel):
