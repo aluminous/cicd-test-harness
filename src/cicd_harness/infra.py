@@ -22,7 +22,11 @@ class InfraStack:
     ) -> None:
         self.profile = profile
         self.kubectl = kubectl
-        self.manifest_path = workspace / "manifests/infra.yaml"
+        self.manifest_path = (
+            profile.infra.manifest
+            if profile.infra is not None
+            else workspace / "manifests/infra.yaml"
+        )
         self.registry = registry or RegistrySupport(profile, kubectl.runner)
 
     def manifest(self) -> str:

@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 
 from cicd_harness.components import default_components
-from cicd_harness.config import HarnessProfile, load_profile
+from cicd_harness.config import HarnessProfile, load_profile_argument
 from cicd_harness.testing import HarnessRuntime, TestHarness
 
 
@@ -94,11 +94,7 @@ def cicd_harness_runtime(pytestconfig: pytest.Config) -> Iterator[HarnessRuntime
     workspace_option = pytestconfig.getoption("--cicd-workspace")
     workspace = Path(workspace_option or pytestconfig.rootpath).resolve()
     profile_option = str(pytestconfig.getoption("--cicd-profile"))
-    profile_path = Path(profile_option)
-    if not profile_path.is_absolute():
-        named_profile = workspace / "profiles" / f"{profile_option}.yaml"
-        profile_path = named_profile if named_profile.exists() else workspace / profile_path
-    profile = load_profile(profile_path, workspace=workspace)
+    profile = load_profile_argument(profile_option, workspace=workspace)
 
     explicit_name = pytestconfig.getoption("--cicd-cluster-name")
     cluster_name = explicit_name or _session_cluster_name(profile)

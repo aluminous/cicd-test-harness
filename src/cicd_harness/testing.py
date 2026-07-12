@@ -12,6 +12,7 @@ from typing import Any
 
 import httpx
 
+from cicd_harness.assets import bundled_workspace
 from cicd_harness.command import CommandRunner
 from cicd_harness.component import EnvironmentComponent
 from cicd_harness.components import (
@@ -602,6 +603,7 @@ class GitAPI:
         ) + (
             self.harness.runtime.workspace / requested,
             self.harness.runtime.workspace / "fixtures" / requested,
+            bundled_workspace() / "fixtures" / requested,
         )
         for candidate in candidates:
             if candidate.is_dir():

@@ -5,6 +5,7 @@ from contextlib import suppress
 from cicd_harness.command import CommandRunner
 from cicd_harness.config import HarnessProfile
 from cicd_harness.registry import RegistrySupport
+from cicd_harness.tooling import ensure_kind_binary
 
 
 class KindCluster:
@@ -25,6 +26,7 @@ class KindCluster:
         return f"kind-{self.profile.kind.cluster_name}"
 
     def exists(self) -> bool:
+        ensure_kind_binary(self.profile.kind)
         result = self.runner.run(
             [self.profile.kind.binary, "get", "clusters"],
             env=self._provider_env(),
@@ -90,6 +92,7 @@ nodes:
 
     def delete(self) -> None:
         try:
+            ensure_kind_binary(self.profile.kind)
             self.runner.run(
                 [
                     self.profile.kind.binary,

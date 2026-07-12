@@ -1,6 +1,10 @@
 # CI/CD test harness
 
-This repository contains executable PoCs for an ephemeral CI/CD environment built from
+> **Alpha preview:** the tested workflows are functional, but public APIs and profile
+> structure may change before `1.0`. The supplied infrastructure is intentionally
+> disposable and is not suitable for production or shared clusters.
+
+This repository provides an ephemeral CI/CD test environment built from
 Kind, Argo Rollouts, Istio, Jenkins, Gitea, WireMock, and a minimal Spinnaker service
 slice.
 
@@ -12,7 +16,42 @@ interfaces:
 - Python owns dependency ordering, readiness, diagnostics, and teardown.
 - pytest tests consume typed fixtures rather than shell output.
 
-## Initial profiles
+## Requirements
+
+- Python 3.11 or newer;
+- Docker or Podman, with at least 8 GiB available to the complete stack;
+- `kubectl`, Helm, and Git on `PATH`;
+- rootful Podman or Docker/DinD for the Kubernetes 1.21 legacy profile.
+
+The profile-specific Kind binary is downloaded on first use into `.tools/bin` and verified
+against a platform-specific SHA-256 checksum. Kubernetes node images and component images
+remain digest- or version-pinned by the selected profile.
+
+## Installation
+
+For source development:
+
+```bash
+git clone https://github.com/aluminous/cicd-test-harness.git
+cd cicd-test-harness
+uv sync --extra dev
+uv run pytest
+```
+
+The built wheel is self-contained: it includes the built-in profiles, manifests, Helm
+charts, image recipes, and repository fixtures. After the preview is published it can be
+installed as a normal development dependency:
+
+```bash
+uv add --dev cicd-test-harness
+uv run cicd-harness profile show modern
+```
+
+A project-owned `profiles/<name>.yaml` takes precedence over the bundled profile with the
+same name, so teams can pin private registries or alternate component images without
+modifying the installed package.
+
+## Built-in profiles
 
 | Profile | Runtime | Kubernetes | Argo Rollouts | Istio | PoC status |
 |---|---|---:|---:|---:|---|
@@ -22,11 +61,11 @@ interfaces:
 All image and tool references are intended to be pinned. Runtime-downloaded release
 assets are cached under `.tools/`, which is deliberately not committed.
 
-## Local commands
+## Quick start
 
 ```bash
-uv sync --extra dev
 uv run cicd-harness profile show modern
+uv run cicd-harness doctor modern --prepare
 uv run cicd-harness stack-up modern
 uv run cicd-harness endpoints modern
 uv run cicd-harness expose modern gitea jenkins
@@ -43,6 +82,10 @@ attaches loopback-only `kubectl port-forward` processes to an existing stack and
 in the foreground until Ctrl-C. This works through rootful Podman without Podman VM port
 mapping and does not depend on Istio.
 
+`doctor` checks the selected container runtime connection plus `kubectl`, Helm, Git, and
+the profile memory budget. With `--prepare`, it also downloads and checksum-verifies the
+pinned Kind binary without creating a cluster.
+
 Infrastructure PoCs are opt-in because they create containers:
 
 ```bash
@@ -53,7 +96,8 @@ Application tests should request the `harness` pytest fixture instead of assembl
 clusters and clients themselves. It provides high-level Git, outbound mock, Jenkins,
 Spinnaker, and Rollout operations; owns an isolated namespace; verifies mocks; and
 collects cluster/component diagnostics automatically on failure. See
-[`docs/testing-api.md`](docs/testing-api.md) for the author-facing API and escape hatch.
+[`docs/testing-api.md`](https://github.com/aluminous/cicd-test-harness/blob/main/docs/testing-api.md)
+for the author-facing API and escape hatch.
 WireMock-backed reverse proxies can pass calls through to real services, record normalized
 request evidence, and replace selected responses without coupling the harness to Istio.
 Writable repositories can be seeded recursively from named fixture directories, and
@@ -65,7 +109,8 @@ manifests. Registry credentials are named by environment variable, materialized 
 private temporary Docker/Podman auth files, installed as Kubernetes pull secrets, and
 removed at teardown. Application manifests applied through `harness.resources` inherit
 the same rewrite and pull-secret behavior. See
-[`docs/testing-api.md`](docs/testing-api.md#private-registries) for configuration.
+[`docs/testing-api.md`](https://github.com/aluminous/cicd-test-harness/blob/main/docs/testing-api.md#private-registries)
+for configuration.
 
 Run one version profile explicitly with `CICD_PROFILE=modern` or
 `CICD_PROFILE=legacy`. Kubernetes 1.21 cannot start under the current rootless Podman VM,
@@ -97,7 +142,7 @@ WireMock returns deterministic HTTP responses and keeps an in-memory request jou
 The harness wrapper resets mappings between tests, verifies call counts, reports
 unmatched outbound calls, and exposes each expectation as a small Python object.
 
-## Validated PoCs
+## Validated workflows
 
 - Gitea repository creation, authenticated commit/push, and exact-commit raw fetch.
 - WireMock host/path/header/JSONPath matching, deterministic responses, exact call-count
@@ -130,12 +175,28 @@ used 6.05 GiB after its full raw and Kustomize pipeline run.
 
 Spinnaker reports deploy-stage success independently of Argo Rollout health, so tests
 must assert both the pipeline execution and `RolloutProbe.wait_healthy()`. See
-[`docs/engineering-notes.md`](docs/engineering-notes.md) for the compatibility traps,
+[`docs/engineering-notes.md`](https://github.com/aluminous/cicd-test-harness/blob/main/docs/engineering-notes.md)
+for the compatibility traps,
 memory tuning history, and refactoring guidance discovered during the PoCs.
 
 The representative application-test coverage and known v1 DX boundaries are recorded
-in [`docs/dx-coverage.md`](docs/dx-coverage.md). The post-PoC structure, completed
+in [`docs/dx-coverage.md`](https://github.com/aluminous/cicd-test-harness/blob/main/docs/dx-coverage.md).
+The post-PoC structure, completed
 cleanup, and next refactoring thresholds are in
-[`docs/architecture-review.md`](docs/architecture-review.md). The intentionally small
+[`docs/architecture-review.md`](https://github.com/aluminous/cicd-test-harness/blob/main/docs/architecture-review.md).
+The intentionally small
 component extension contract is documented in
-[`docs/components.md`](docs/components.md).
+[`docs/components.md`](https://github.com/aluminous/cicd-test-harness/blob/main/docs/components.md).
+
+## Contributing and licensing
+
+Contributions are welcome; see
+[`CONTRIBUTING.md`](https://github.com/aluminous/cicd-test-harness/blob/main/CONTRIBUTING.md)
+and [`SECURITY.md`](https://github.com/aluminous/cicd-test-harness/blob/main/SECURITY.md)
+before opening a change or security report. The harness is available under the
+[`MIT License`](https://github.com/aluminous/cicd-test-harness/blob/main/LICENSE).
+Vendored upstream material is documented in
+[`THIRD_PARTY_NOTICES.md`](https://github.com/aluminous/cicd-test-harness/blob/main/THIRD_PARTY_NOTICES.md).
+Maintainers can use the
+[`OSS preview release checklist`](https://github.com/aluminous/cicd-test-harness/blob/main/docs/release-checklist.md)
+when publishing an artifact.

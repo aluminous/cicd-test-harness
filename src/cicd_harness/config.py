@@ -5,6 +5,8 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from cicd_harness.assets import bundled_workspace
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -49,11 +51,29 @@ class KindConfig(StrictModel):
     node_image: str
     cluster_name: str
     wait_seconds: int = Field(default=180, ge=30)
+    download_sha256: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def require_digest(self) -> KindConfig:
         if "@sha256:" not in self.node_image:
             raise ValueError("Kind node image must be pinned by sha256 digest")
+        return self
+
+    @model_validator(mode="after")
+    def validate_download_checksums(self) -> KindConfig:
+        for platform, checksum in self.download_sha256.items():
+            if platform not in {
+                "darwin-amd64",
+                "darwin-arm64",
+                "linux-amd64",
+                "linux-arm64",
+            }:
+                raise ValueError(f"unsupported Kind download platform: {platform}")
+            invalid_character = any(
+                character not in "0123456789abcdef" for character in checksum
+            )
+            if len(checksum) != 64 or invalid_character:
+                raise ValueError(f"invalid Kind sha256 checksum for {platform}")
         return self
 
 
@@ -97,6 +117,7 @@ class WireMockConfig(ServiceImageConfig):
 
 
 class InfraConfig(StrictModel):
+    manifest: Path = Path("manifests/infra.yaml")
     gitea: ServiceImageConfig | None = None
     wiremock: WireMockConfig | None = None
 
@@ -149,6 +170,7 @@ def _resolve_paths(profile: HarnessProfile, root: Path) -> HarnessProfile:
         ("argo_rollouts", "notifications_manifest"),
         ("istio", "chart_directory"),
         ("istio", "arm64_pilot.containerfile"),
+        ("infra", "manifest"),
         ("spinnaker", "manifest"),
         ("jenkins", "manifest"),
         ("jenkins", "containerfile"),
@@ -171,3 +193,43 @@ def load_profile(path: Path, *, workspace: Path | None = None) -> HarnessProfile
     raw = yaml.safe_load(path.read_text())
     profile = HarnessProfile.model_validate(raw)
     return _resolve_paths(profile, (workspace or path.parent).resolve())
+
+
+def load_profile_argument(value: str, *, workspace: Path) -> HarnessProfile:
+    """Load a project profile, falling back to package-owned preview profiles."""
+
+    workspace = workspace.resolve()
+    requested = Path(value)
+    candidates: tuple[tuple[Path, Path, bool], ...]
+    if requested.is_absolute():
+        candidates = ((requested, workspace, False),)
+    else:
+        candidates = (
+            (workspace / "profiles" / f"{value}.yaml", workspace, False),
+            (workspace / requested, workspace, False),
+            (
+                bundled_workspace() / "profiles" / f"{value}.yaml",
+                bundled_workspace(),
+                True,
+            ),
+        )
+    for path, root, bundled in candidates:
+        if not path.is_file():
+            continue
+        profile = load_profile(path, workspace=root)
+        if bundled:
+            profile = profile.model_copy(
+                update={
+                    "kind": profile.kind.model_copy(
+                        update={
+                            "binary": workspace
+                            / ".tools"
+                            / "bin"
+                            / f"kind-v{profile.kind.version}"
+                        }
+                    )
+                }
+            )
+        return profile
+    rendered = ", ".join(str(path) for path, _, _ in candidates)
+    raise FileNotFoundError(f"profile {value!r} was not found; searched: {rendered}")

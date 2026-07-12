@@ -10,6 +10,11 @@ kind:
   binary: .tools/bin/kind-v0.17.0
   node_image: kindest/node:v1.21.14@sha256:9d9eb5fb26b4fbc0c6d95fa8c790414f9750dd583f5d7cee45d92e8c26670aa1
   cluster_name: cicd-poc-legacy
+  download_sha256:
+    darwin-amd64: a4e9f4cf18ec762934f4acd68752fe085bcded3a736258de0367085525180342
+    darwin-arm64: b9afee2707e711fb5d39049a361972f8c44ee7ce6145cafd0f7e4b47ceec1409
+    linux-amd64: a8c045856db33f839908b6acb90dc8ec397253ffdaef7baf058f5a542e009b9c
+    linux-arm64: 24ae8c7ef46c3c1ec7167a8c210979233b42dacd2426f1e86fc89021632333e6
 
 argo_rollouts:
   version: 1.4.1
@@ -33,6 +38,7 @@ istio:
     hosts: ["*.harness.test"]
 
 infra:
+  manifest: manifests/infra.yaml
   gitea:
     image: docker.gitea.com/gitea:1.26.4-rootless
   wiremock:

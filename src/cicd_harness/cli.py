@@ -2,29 +2,26 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
+import sys
 import time
 from pathlib import Path
 
+from cicd_harness import __version__
 from cicd_harness.command import CommandRunner
 from cicd_harness.component import ComponentGraph
 from cicd_harness.components import default_components, select_components
-from cicd_harness.config import HarnessProfile, load_profile
+from cicd_harness.config import HarnessProfile, load_profile_argument
 from cicd_harness.endpoints import EndpointCatalog, HostEndpoint, HostEndpointManager
 from cicd_harness.environment import HarnessEnvironment
+from cicd_harness.errors import HarnessError
 from cicd_harness.kind import KindCluster
 from cicd_harness.kubectl import Kubectl
+from cicd_harness.tooling import ensure_kind_binary
 
 
 def _workspace() -> Path:
     return Path.cwd()
-
-
-def _profile_path(workspace: Path, value: str) -> Path:
-    requested = Path(value)
-    if requested.is_absolute():
-        return requested
-    named = workspace / "profiles" / f"{value}.yaml"
-    return named if named.exists() else workspace / requested
 
 
 def _component_names(value: str | None) -> set[str] | None:
@@ -68,7 +65,16 @@ def _endpoint_rows(endpoints: tuple[HostEndpoint, ...]) -> str:
 
 
 def main() -> None:
+    try:
+        _main()
+    except (HarnessError, OSError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
+
+
+def _main() -> None:
     parser = argparse.ArgumentParser(prog="cicd-harness")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     profile_parser = subparsers.add_parser("profile")
@@ -121,22 +127,77 @@ def main() -> None:
         action="store_true",
         help="expose deep-debug endpoints as well as the default catalog",
     )
+    doctor_parser = subparsers.add_parser("doctor")
+    doctor_parser.add_argument("profile")
+    doctor_parser.add_argument(
+        "--prepare",
+        action="store_true",
+        help="download and verify the profile-pinned Kind binary",
+    )
 
     args = parser.parse_args()
     workspace = _workspace()
     if args.command == "profile":
-        profile = load_profile(_profile_path(workspace, args.name), workspace=workspace)
+        profile = load_profile_argument(args.name, workspace=workspace)
         print(json.dumps(profile.model_dump(mode="json"), indent=2))
         return
 
     profile_name = args.profile
-    profile = load_profile(_profile_path(workspace, profile_name), workspace=workspace)
+    profile = load_profile_argument(profile_name, workspace=workspace)
     cluster_name = getattr(args, "cluster_name", None)
     if cluster_name:
         profile = profile.model_copy(
             update={"kind": profile.kind.model_copy(update={"cluster_name": cluster_name})}
         )
     runner = CommandRunner(cwd=workspace)
+    if args.command == "doctor":
+        checks: list[tuple[str, bool, str]] = []
+        for executable in (profile.runtime.provider, "kubectl", "helm", "git"):
+            path = shutil.which(executable)
+            checks.append(
+                (
+                    executable,
+                    path is not None,
+                    path or "not found on PATH",
+                )
+            )
+        runtime = runner.run(
+            [profile.runtime.provider, "info"],
+            check=False,
+            timeout=20,
+        ) if shutil.which(profile.runtime.provider) else None
+        if runtime is not None:
+            checks.append(
+                (
+                    f"{profile.runtime.provider} connection",
+                    runtime.returncode == 0,
+                    "available" if runtime.returncode == 0 else "runtime is not reachable",
+                )
+            )
+        if args.prepare:
+            binary = ensure_kind_binary(profile.kind)
+            checks.append(("kind", True, f"verified at {binary}"))
+        elif profile.kind.binary.is_file():
+            checks.append(("kind", True, f"cached at {profile.kind.binary}"))
+        else:
+            checks.append(
+                (
+                    "kind",
+                    True,
+                    f"will download and verify v{profile.kind.version} on first use",
+                )
+            )
+        width = max(len(name) for name, _, _ in checks)
+        for name, passed, detail in checks:
+            print(f"{'ok' if passed else 'missing':<7} {name:<{width}}  {detail}")
+        failures = [name for name, passed, _ in checks if not passed]
+        if failures:
+            raise HarnessError("environment checks failed: " + ", ".join(failures))
+        print(
+            f"ok      {'memory budget':<{width}}  "
+            f"{profile.runtime.memory_budget_mib} MiB"
+        )
+        return
     if args.command in {"endpoints", "expose"}:
         graph = _component_graph(profile, _component_names(args.components))
         catalog = EndpointCatalog(graph)

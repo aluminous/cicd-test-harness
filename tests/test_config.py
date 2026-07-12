@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from cicd_harness.config import HarnessProfile, load_profile
+from cicd_harness.config import HarnessProfile, load_profile, load_profile_argument
 
 
 def test_load_modern_profile() -> None:
@@ -19,10 +19,20 @@ def test_load_modern_profile() -> None:
     assert profile.jenkins.manifest == workspace / "manifests/jenkins-poc.yaml"
     assert profile.jenkins.containerfile == workspace / "images/jenkins/Containerfile"
     assert profile.jenkins.plugins_file == workspace / "images/jenkins/plugins.txt"
+    assert profile.infra.manifest == workspace / "manifests/infra.yaml"
+    assert profile.kind.download_sha256["darwin-arm64"].startswith("88bf")
     assert "pipeline" in profile.jenkins.image
     assert profile.infra.wiremock.max_request_journal_entries == 1000
     assert profile.infra.wiremock.logged_response_body_size_limit == 65536
     assert profile.infra.wiremock.proxy_timeout_milliseconds == 30000
+
+
+def test_profile_argument_prefers_project_owned_named_profile() -> None:
+    workspace = Path(__file__).parents[1]
+
+    profile = load_profile_argument("modern", workspace=workspace)
+
+    assert profile.kind.binary == workspace / ".tools/bin/kind-v0.31.0"
 
 
 def test_kind_image_requires_digest() -> None:

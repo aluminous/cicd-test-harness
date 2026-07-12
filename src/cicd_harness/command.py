@@ -35,16 +35,19 @@ class CommandRunner:
         process_env = os.environ.copy()
         process_env.update(self.base_env)
         process_env.update(env or {})
-        completed = subprocess.run(
-            normalized,
-            cwd=self.cwd,
-            env=process_env,
-            input=input_text,
-            text=True,
-            capture_output=True,
-            timeout=timeout,
-            check=False,
-        )
+        try:
+            completed = subprocess.run(
+                normalized,
+                cwd=self.cwd,
+                env=process_env,
+                input=input_text,
+                text=True,
+                capture_output=True,
+                timeout=timeout,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            raise CommandError(f"required executable was not found: {normalized[0]}") from exc
         result = CommandResult(
             argv=normalized,
             returncode=completed.returncode,
@@ -69,12 +72,14 @@ class CommandRunner:
         process_env = os.environ.copy()
         process_env.update(self.base_env)
         process_env.update(env or {})
-        return subprocess.Popen(
-            normalized,
-            cwd=self.cwd,
-            env=process_env,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-
+        try:
+            return subprocess.Popen(
+                normalized,
+                cwd=self.cwd,
+                env=process_env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+        except FileNotFoundError as exc:
+            raise CommandError(f"required executable was not found: {normalized[0]}") from exc
