@@ -48,3 +48,5 @@ jobs:
           cd /tmp
           /tmp/cicd-harness-smoke/bin/cicd-harness profile show modern
           /tmp/cicd-harness-smoke/bin/cicd-harness endpoints modern --components wiremock,gitea
+          /tmp/cicd-harness-smoke/bin/cicd-harness image build --help
+          /tmp/cicd-harness-smoke/bin/python -c 'from pathlib import Path; from cicd_harness.config import load_profile_argument; p = load_profile_argument("legacy", workspace=Path.cwd()); assert p.istio.arm64_pilot.containerfile.is_file()'

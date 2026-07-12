@@ -116,7 +116,9 @@ Run one version profile explicitly with `CICD_PROFILE=modern` or
 `CICD_PROFILE=legacy`. Kubernetes 1.21 cannot start under the current rootless Podman VM,
 so the legacy profile requires a rootful Podman connection or Docker/DinD. On Apple
 Silicon it builds an exact-source arm64 Istio 1.10.6 pilot shim automatically; see the
-engineering notes for its gateway fidelity boundary.
+[`ARM64 compatibility guide`](https://github.com/aluminous/cicd-test-harness/blob/main/docs/arm64-compatibility.md)
+for the reproducible Docker/Podman build command, GHCR publication path, and gateway
+fidelity boundary.
 
 On macOS, the current PoC supports the existing Podman machine. CI will use a privileged
 DinD harness container so all child processes share one 8 GiB cgroup.
@@ -187,6 +189,8 @@ cleanup, and next refactoring thresholds are in
 The intentionally small
 component extension contract is documented in
 [`docs/components.md`](https://github.com/aluminous/cicd-test-harness/blob/main/docs/components.md).
+ARM64 native, emulated, and compatibility-image boundaries are summarized in
+[`docs/arm64-compatibility.md`](https://github.com/aluminous/cicd-test-harness/blob/main/docs/arm64-compatibility.md).
 
 ## Contributing and licensing
 

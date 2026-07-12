@@ -14,6 +14,8 @@ Initial public preview:
 - dependency-ordered `EnvironmentComponent` lifecycle graph and exact component subsets;
 - high-level pytest APIs, automatic failure diagnostics, private-registry rewriting, host
   endpoint exposure, and failed-environment preservation;
-- self-contained wheel assets and checksum-pinned automatic Kind installation.
+- self-contained wheel assets and checksum-pinned automatic Kind installation;
+- reproducible Docker/Podman build and manual GHCR publication for the exact-source
+  Istio 1.10.6 ARM64 pilot compatibility image; and
 - contributor, security, third-party licensing, environment-doctor, and fast CI
   documentation suitable for an initial OSS preview.

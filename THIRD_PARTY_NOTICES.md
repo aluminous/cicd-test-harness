@@ -15,3 +15,9 @@ included at [`vendor/LICENSES/Apache-2.0.txt`](vendor/LICENSES/Apache-2.0.txt).
 Container images referenced by profiles are not redistributed by this Python package.
 They are fetched from their named registries when a user starts an environment and remain
 subject to their respective upstream licenses.
+
+The optional `istio-pilot-arm64` recipe builds a derivative image from the exact Istio
+1.10.6 source archive. The builder verifies the recorded upstream checksum and revision,
+and the resulting image includes Istio's Apache 2.0 license plus machine-readable build
+metadata. Any copy published to GHCR is a harness compatibility artifact, not an official
+Istio release and not a complete Istio data plane.

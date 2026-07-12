@@ -36,6 +36,11 @@ Before tagging, run at least the reduced Gitea/WireMock/Jenkins live lane and on
 Spinnaker deployment on the intended release platform. The fast GitHub workflow does not
 create privileged DinD infrastructure.
 
+For a release that changes ARM64 compatibility, also build the legacy pilot recipe with
+both supported runtime command paths where available, inspect its embedded license and
+`BUILD-METADATA.json`, and manually publish the GHCR image only after reviewing the
+fidelity statement in `docs/arm64-compatibility.md`.
+
 ## Publish
 
 - Update `CHANGELOG.md` and the project version.

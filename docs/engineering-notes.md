@@ -148,6 +148,11 @@ toolchain, verifies the source archive checksum, embeds the official release tag
 and loads the resulting image into Kind. Its version output must report 1.10.6, revision
 `fd053c6165d21105d66dac6e3d0649db2dde5b86`, and `Clean`.
 
+The same builder is available from an installed package as
+`cicd-harness image build legacy istio-pilot-arm64`, supports Docker and Podman, asserts
+the output ELF architecture, and embeds the upstream license and build metadata. The
+complete compatibility and GHCR publication contract is in `docs/arm64-compatibility.md`.
+
 Missing-image bootstrap was also exercised from source through controller readiness and
 the canary assertion. With the Go builder image already present but empty Istio source
 and module caches, it completed in 117 seconds. The downloaded source and Go caches live

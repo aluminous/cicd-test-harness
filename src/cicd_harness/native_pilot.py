@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import platform
+import shutil
 import tarfile
 from pathlib import Path
 
@@ -38,23 +40,51 @@ class NativePilotBuilder:
         return platform.machine().lower() in {"arm64", "aarch64"}
 
     def prepare(self) -> None:
-        if not self._local_image_exists():
-            source = self._source_tree()
-            self._build_binary(source)
+        if self.config.pull_before_build and not self._local_image_exists():
             self.runner.run(
-                [
-                    "podman",
-                    "build",
-                    "--no-cache",
-                    "-t",
-                    self.image,
-                    "-f",
-                    self.config.containerfile,
-                    source / "out",
-                ],
-                timeout=900,
+                [self.runtime, "pull", "--platform", "linux/arm64", self.image],
+                check=False,
+                timeout=600,
             )
+        self.build()
         self._load_into_kind()
+
+    @property
+    def runtime(self) -> str:
+        return self.profile.runtime.provider
+
+    def build(self, *, force: bool = False) -> str:
+        """Build the pinned pilot-only linux/arm64 compatibility image."""
+
+        if not force and self._local_image_exists():
+            return self.image
+        source = self._source_tree()
+        self._build_binary(source)
+        self._stage_metadata(source)
+        self.runner.run(self.build_command(source / "out"), timeout=900)
+        return self.image
+
+    def push(self) -> str:
+        """Push a previously built image using the configured runtime credentials."""
+
+        if not self._local_image_exists():
+            raise HarnessError(f"image is not available locally: {self.image}")
+        self.runner.run([self.runtime, "push", self.image], timeout=900)
+        return self.image
+
+    def build_command(self, context: Path) -> list[str | Path]:
+        return [
+            self.runtime,
+            "build",
+            "--no-cache",
+            "--platform",
+            "linux/arm64",
+            "-t",
+            self.image,
+            "-f",
+            self.config.containerfile,
+            context,
+        ]
 
     def helm_values(self) -> tuple[str]:
         # The 1.10 chart accepts a full reference when pilot.image contains a
@@ -64,7 +94,7 @@ class NativePilotBuilder:
 
     def _local_image_exists(self) -> bool:
         result = self.runner.run(
-            ["podman", "image", "exists", self.image],
+            [self.runtime, "image", "inspect", self.image],
             check=False,
             timeout=30,
         )
@@ -125,7 +155,7 @@ class NativePilotBuilder:
         )
         self.runner.run(
             [
-                "podman",
+                self.runtime,
                 "run",
                 "--rm",
                 "--memory=5g",
@@ -150,11 +180,31 @@ class NativePilotBuilder:
             ],
             timeout=1200,
         )
+        self._validate_arm64_elf(source / "out/pilot-discovery")
+
+    def _stage_metadata(self, source: Path) -> None:
+        output = source / "out"
+        license_path = source / "LICENSE"
+        if not license_path.is_file():
+            raise HarnessError("Istio source archive does not contain LICENSE")
+        shutil.copyfile(license_path, output / "LICENSE")
+        metadata = {
+            "component": "istio/pilot-discovery",
+            "fidelity": "pilot control plane only; no proxyv2 or ingress data plane",
+            "git_revision": self.config.git_revision,
+            "source_sha256": self.config.source_sha256,
+            "source_url": self.config.source_url,
+            "target": "linux/arm64",
+            "version": self.profile.istio.version,
+        }
+        (output / "BUILD-METADATA.json").write_text(
+            json.dumps(metadata, indent=2, sort_keys=True) + "\n"
+        )
 
     def _load_into_kind(self) -> None:
         node = f"{self.profile.kind.cluster_name}-control-plane"
         present = self.runner.run(
-            ["podman", "exec", node, "crictl", "inspecti", self.image],
+            [self.runtime, "exec", node, "crictl", "inspecti", self.image],
             check=False,
             timeout=30,
         )
@@ -164,7 +214,7 @@ class NativePilotBuilder:
         image_archive.parent.mkdir(parents=True, exist_ok=True)
         try:
             self.runner.run(
-                ["podman", "save", "-o", image_archive, self.image],
+                [self.runtime, "save", "-o", image_archive, self.image],
                 timeout=300,
             )
             self.runner.run(
@@ -176,7 +226,7 @@ class NativePilotBuilder:
                     "--name",
                     self.profile.kind.cluster_name,
                 ],
-                env={"KIND_EXPERIMENTAL_PROVIDER": "podman"},
+                env={"KIND_EXPERIMENTAL_PROVIDER": self.runtime},
                 timeout=300,
             )
         finally:
@@ -189,6 +239,22 @@ class NativePilotBuilder:
             for chunk in iter(lambda: source.read(1024 * 1024), b""):
                 digest.update(chunk)
         return digest.hexdigest()
+
+    @staticmethod
+    def _validate_arm64_elf(path: Path) -> None:
+        header = path.read_bytes()[:20]
+        if len(header) < 20 or header[:4] != b"\x7fELF":
+            raise HarnessError(f"pilot build did not produce an ELF binary: {path}")
+        byte_order = "little" if header[5] == 1 else "big" if header[5] == 2 else None
+        if byte_order is None:
+            raise HarnessError(
+                f"pilot build produced an ELF binary with invalid byte order: {path}"
+            )
+        machine = int.from_bytes(header[18:20], byte_order)
+        if machine != 183:
+            raise HarnessError(
+                f"pilot build produced ELF machine {machine}; expected AArch64 (183)"
+            )
 
     @staticmethod
     def _validate_archive(archive: tarfile.TarFile, destination: Path) -> None:

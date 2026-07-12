@@ -97,6 +97,7 @@ class NativePilotConfig(StrictModel):
     git_revision: str
     containerfile: Path
     gateway_stub_image: str = "registry.k8s.io/pause:3.9"
+    pull_before_build: bool = False
 
 
 class IstioConfig(StrictModel):

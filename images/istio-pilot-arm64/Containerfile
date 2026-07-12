@@ -3,7 +3,18 @@
 # docker.io/istio/pilot:1.10.6 image instead.
 FROM scratch
 
+LABEL org.opencontainers.image.title="CI/CD harness Istio pilot ARM64 compatibility image" \
+      org.opencontainers.image.description="Exact Istio 1.10.6 pilot control plane for linux/arm64; no proxyv2 data plane" \
+      org.opencontainers.image.source="https://github.com/aluminous/cicd-test-harness" \
+      org.opencontainers.image.url="https://github.com/aluminous/cicd-test-harness/blob/main/docs/arm64-compatibility.md" \
+      org.opencontainers.image.version="1.10.6-arm64-poc" \
+      org.opencontainers.image.revision="fd053c6165d21105d66dac6e3d0649db2dde5b86" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      io.aluminous.cicd-harness.fidelity="pilot-control-plane-only"
+
 COPY --chown=1337:1337 pilot-discovery /usr/local/bin/pilot-discovery
+COPY --chown=1337:1337 LICENSE /licenses/istio/LICENSE
+COPY --chown=1337:1337 BUILD-METADATA.json /usr/share/cicd-harness/BUILD-METADATA.json
 
 USER 1337:1337
 ENTRYPOINT ["/usr/local/bin/pilot-discovery"]

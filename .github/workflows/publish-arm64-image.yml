@@ -1,0 +1,62 @@
+name: Publish ARM64 compatibility image
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: GHCR tag for the Istio 1.10.6 pilot compatibility image
+        required: true
+        default: 1.10.6-arm64-poc
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/cicd-harness-istio-pilot:${{ inputs.tag }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.16"
+          python-version: "3.11"
+          enable-cache: true
+
+      - name: Install harness
+        run: uv sync --frozen --python 3.11
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Build and push exact-source ARM64 pilot
+        run: >-
+          uv run cicd-harness image build legacy istio-pilot-arm64
+          --runtime docker --tag "$IMAGE" --force --push
+
+      - name: Verify image metadata
+        run: |
+          test "$(docker image inspect --format '{{.Architecture}}' "$IMAGE")" = arm64
+          docker image inspect --format '{{json .Config.Labels}}' "$IMAGE"
+
+      - name: Record published reference
+        run: |
+          {
+            echo "### ARM64 compatibility image"
+            echo '```text'
+            docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Log out of GHCR
+        if: always()
+        run: docker logout ghcr.io

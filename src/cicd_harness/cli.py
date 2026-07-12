@@ -17,6 +17,8 @@ from cicd_harness.environment import HarnessEnvironment
 from cicd_harness.errors import HarnessError
 from cicd_harness.kind import KindCluster
 from cicd_harness.kubectl import Kubectl
+from cicd_harness.native_pilot import NativePilotBuilder
+from cicd_harness.registry import RegistrySupport
 from cicd_harness.tooling import ensure_kind_binary
 
 
@@ -134,6 +136,19 @@ def _main() -> None:
         action="store_true",
         help="download and verify the profile-pinned Kind binary",
     )
+    image_parser = subparsers.add_parser("image")
+    image_subparsers = image_parser.add_subparsers(dest="image_command", required=True)
+    image_build_parser = image_subparsers.add_parser("build")
+    image_build_parser.add_argument("profile")
+    image_build_parser.add_argument("recipe", choices=("istio-pilot-arm64",))
+    image_build_parser.add_argument(
+        "--runtime",
+        choices=("docker", "podman"),
+        help="override the profile container runtime",
+    )
+    image_build_parser.add_argument("--tag", help="override the output image reference")
+    image_build_parser.add_argument("--force", action="store_true")
+    image_build_parser.add_argument("--push", action="store_true")
 
     args = parser.parse_args()
     workspace = _workspace()
@@ -149,7 +164,29 @@ def _main() -> None:
         profile = profile.model_copy(
             update={"kind": profile.kind.model_copy(update={"cluster_name": cluster_name})}
         )
+    runtime_override = getattr(args, "runtime", None)
+    if runtime_override:
+        profile = profile.model_copy(
+            update={"runtime": profile.runtime.model_copy(update={"provider": runtime_override})}
+        )
     runner = CommandRunner(cwd=workspace)
+    if args.command == "image":
+        native_pilot = profile.istio.arm64_pilot if profile.istio is not None else None
+        if native_pilot is None:
+            raise HarnessError(f"profile {profile.name!r} has no ARM64 pilot image recipe")
+        if args.tag:
+            native_pilot = native_pilot.model_copy(update={"image": args.tag})
+        registry = RegistrySupport(profile, runner)
+        registry.install_runtime_auth(profile.runtime.provider)
+        try:
+            builder = NativePilotBuilder(profile, native_pilot, runner, registry)
+            image = builder.build(force=args.force)
+            if args.push:
+                builder.push()
+            print(image)
+        finally:
+            registry.close()
+        return
     if args.command == "doctor":
         checks: list[tuple[str, bool, str]] = []
         for executable in (profile.runtime.provider, "kubectl", "helm", "git"):
