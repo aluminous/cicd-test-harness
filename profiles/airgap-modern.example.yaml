@@ -1,15 +1,40 @@
-name: modern
+name: airgap-modern
 
 runtime:
   provider: podman
   memory_budget_mib: 8192
 
+airgap:
+  enabled: true
+  allowed_hosts:
+    - registry.airgap.example
+    - nexus.airgap.example
+
+# Uncomment after placing your PEM-encoded corporate root in the project.
+# trust:
+#   ca_certificate: certificates/corporate-ca.pem
+#   # Emergency-only fallback when the registered CA cannot be used:
+#   # insecure_skip_tls_verify: true
+
+registry:
+  rewrites:
+    docker.io: registry.airgap.example/dockerhub
+    docker.gitea.com: registry.airgap.example/gitea
+    quay.io: registry.airgap.example/quay
+    registry.k8s.io: registry.airgap.example/kubernetes
+    us-docker.pkg.dev: registry.airgap.example/spinnaker
+  credentials:
+    - server: registry.airgap.example
+      username_env: AIRGAP_REGISTRY_USERNAME
+      password_env: AIRGAP_REGISTRY_PASSWORD
+
 kind:
   version: 0.31.0
   binary: .tools/bin/kind-v0.31.0
   node_image: kindest/node:v1.31.14@sha256:6f86cf509dbb42767b6e79debc3f2c32e4ee01386f0489b3b2be24b0a55aac2b
-  cluster_name: cicd-poc-modern
+  cluster_name: cicd-airgap-modern
   containerd_registry_mode: hosts
+  download_url_template: https://nexus.airgap.example/repository/kind/v{version}/kind-{platform}
   download_sha256:
     darwin-amd64: a8b3cf77b2ad77aec5bf710d1a2589d9117576132af812885cad41e9dede4d4e
     darwin-arm64: 88bf554fe9da6311c9f8c2d082613c002911a476f6b5090e9420b35d84e70c5c
@@ -54,7 +79,14 @@ jenkins:
   version: 2.426.1
   enabled: true
   manifest: manifests/jenkins-poc.yaml
-  image: localhost/cicd-harness/jenkins:2.426.1-pipeline
+  image: registry.airgap.example/harness/jenkins:2.426.1-pipeline
   base_image: docker.io/jenkins/jenkins:2.426.1-lts-jdk17
   containerfile: images/jenkins/Containerfile
   plugins_file: images/jenkins/plugins.txt
+  image_policy: pull-only
+  plugin_mirrors:
+    update_center: https://nexus.airgap.example/repository/jenkins-updates
+    experimental_update_center: https://nexus.airgap.example/repository/jenkins-experimental
+    download: https://nexus.airgap.example/repository/jenkins-download
+    plugin_info: https://nexus.airgap.example/repository/jenkins-updates/current/plugin-versions.json
+    incrementals: https://nexus.airgap.example/repository/jenkins-incrementals

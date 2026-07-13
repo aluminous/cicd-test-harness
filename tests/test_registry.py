@@ -9,7 +9,13 @@ import yaml
 from pydantic import ValidationError
 
 from cicd_harness.command import CommandResult, CommandRunner
-from cicd_harness.config import RegistryConfig, RegistryCredentialConfig, load_profile
+from cicd_harness.config import (
+    RegistryConfig,
+    RegistryCredentialConfig,
+    TrustConfig,
+    load_profile,
+)
+from cicd_harness.controllers import ControllerStack
 from cicd_harness.errors import HarnessError
 from cicd_harness.infra import InfraStack
 from cicd_harness.jenkins import JenkinsStack
@@ -139,6 +145,45 @@ def test_kind_uses_the_effective_private_node_image() -> None:
     assert create_command[image_index].startswith(
         "registry.example/cache/docker.io/kindest/node:v1.31.14@sha256:"
     )
+
+
+def test_insecure_tls_uses_podman_cli_and_kind_containerd_switches(
+    tmp_path: Path,
+) -> None:
+    profile = _profile(RegistryConfig()).model_copy(
+        update={"trust": TrustConfig(insecure_skip_tls_verify=True)}
+    )
+    runner = Mock(cwd=tmp_path)
+    runner.base_env = {}
+    registry = RegistrySupport(profile, runner)
+    cluster = KindCluster(profile, runner, registry=registry)
+
+    try:
+        assert registry.runtime_tls_args("podman") == ("--tls-verify=false",)
+        assert registry.runtime_tls_args("docker") == ()
+        config = cluster._cluster_config()
+        assert "containerdConfigPatches" not in config
+    finally:
+        cluster.trust.close()
+        registry.close()
+
+    workspace = Path(__file__).parents[1]
+    legacy = load_profile(
+        workspace / "profiles/legacy.yaml",
+        workspace=workspace,
+    ).model_copy(update={"trust": TrustConfig(insecure_skip_tls_verify=True)})
+    legacy_runner = Mock(cwd=tmp_path)
+    legacy_runner.base_env = {}
+    legacy_registry = RegistrySupport(legacy, legacy_runner)
+    legacy_cluster = KindCluster(legacy, legacy_runner, registry=legacy_registry)
+    try:
+        legacy_config = legacy_cluster._cluster_config()
+        assert "insecure_skip_verify = true" in legacy_config
+        assert 'registry.configs."docker.io".tls' in legacy_config
+        assert "io.containerd.cri.v1.images" not in legacy_config
+    finally:
+        legacy_cluster.trust.close()
+        legacy_registry.close()
 
 
 def test_runtime_auth_files_are_private_and_removed(
@@ -307,6 +352,107 @@ def test_all_component_manifests_use_effective_registry_images(tmp_path: Path) -
     assert "registry.example/local/cicd-harness/jenkins" in jenkins
     assert "registry.example/google/spinnaker-community/docker/gate" in spinnaker
     assert "registry.example/docker/library/redis:7.2.7-alpine" in spinnaker
+
+
+def test_component_manifests_disable_nonessential_runtime_egress(tmp_path: Path) -> None:
+    profile = _profile(RegistryConfig())
+    runner = Mock(cwd=tmp_path)
+    kubectl = SimpleNamespace(runner=runner)
+
+    jenkins_documents = list(
+        yaml.safe_load_all(JenkinsStack(profile, kubectl).manifest())
+    )
+    jenkins = next(
+        document
+        for document in jenkins_documents
+        if document.get("kind") == "Deployment"
+        and document["metadata"]["name"] == "jenkins"
+    )
+    jenkins_opts = next(
+        item["value"]
+        for item in jenkins["spec"]["template"]["spec"]["containers"][0]["env"]
+        if item["name"] == "JAVA_OPTS"
+    )
+    assert "-Dhudson.model.UpdateCenter.never=true" in jenkins_opts
+    assert "DownloadService$Downloadable.defaultInterval=9223372036854775807" in (
+        jenkins_opts
+    )
+
+    spinnaker_documents = list(
+        yaml.safe_load_all(
+            SpinnakerStack(profile, SimpleNamespace(), kubectl, runner).manifest()
+        )
+    )
+    for service in ("gate", "front50", "orca", "clouddriver", "rosco"):
+        deployment = next(
+            document
+            for document in spinnaker_documents
+            if document.get("kind") == "Deployment"
+            and document["metadata"]["name"] == f"spin-{service}"
+        )
+        host_aliases = deployment["spec"]["template"]["spec"]["hostAliases"]
+        assert host_aliases == [
+            {"ip": "127.0.0.1", "hostnames": ["raw.githubusercontent.com"]}
+        ]
+    minio = next(
+        document
+        for document in spinnaker_documents
+        if document.get("kind") == "Deployment"
+        and document["metadata"]["name"] == "spin-minio"
+    )
+    minio_env = {
+        item["name"]: item["value"]
+        for item in minio["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert minio_env["MINIO_UPDATE"] == "off"
+    assert minio_env["MINIO_CALLHOME_ENABLE"] == "off"
+    assert minio_env["MINIO_BROWSER"] == "off"
+
+
+def test_istio_helm_values_keep_cloud_metadata_probe_on_loopback(tmp_path: Path) -> None:
+    profile = _profile(RegistryConfig())
+    runner = Mock(cwd=tmp_path)
+    runner.run.return_value = CommandResult(("helm", "version"), 0, "v3.17.0", "")
+    kubectl = Mock(context="kind-test", runner=runner)
+    registry = Mock()
+    registry.istio_image_values.return_value = ()
+    registry.gateway_image_values.return_value = ()
+    stack = ControllerStack(profile, kubectl, runner, registry)
+    stack._helm_upgrade = Mock()  # type: ignore[method-assign]
+
+    stack.install_istio()
+
+    upgrades = {call.args[0]: call for call in stack._helm_upgrade.call_args_list}
+    assert "pilot.env.GCE_METADATA_HOST=127.0.0.1:9" in (
+        upgrades["istiod"].kwargs["values"]
+    )
+    assert "env.GCE_METADATA_HOST=127.0.0.1:9" in (
+        upgrades["istio-ingressgateway"].kwargs["values"]
+    )
+
+
+def test_istio_processes_receive_global_insecure_tls_marker(tmp_path: Path) -> None:
+    profile = _profile(RegistryConfig()).model_copy(
+        update={"trust": TrustConfig(insecure_skip_tls_verify=True)}
+    )
+    runner = Mock(cwd=tmp_path)
+    runner.run.return_value = CommandResult(("helm", "version"), 0, "v3.17.0", "")
+    kubectl = Mock(context="kind-test", runner=runner)
+    registry = Mock()
+    registry.istio_image_values.return_value = ()
+    registry.gateway_image_values.return_value = ()
+    stack = ControllerStack(profile, kubectl, runner, registry)
+    stack._helm_upgrade = Mock()  # type: ignore[method-assign]
+
+    stack.install_istio()
+
+    upgrades = {call.args[0]: call for call in stack._helm_upgrade.call_args_list}
+    assert "pilot.env.CICD_HARNESS_INSECURE_SKIP_TLS_VERIFY=1" in (
+        upgrades["istiod"].kwargs["values"]
+    )
+    assert "env.CICD_HARNESS_INSECURE_SKIP_TLS_VERIFY=1" in (
+        upgrades["istio-ingressgateway"].kwargs["values"]
+    )
 
 
 def test_registry_configuration_rejects_urls_and_server_paths() -> None:

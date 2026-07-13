@@ -1,15 +1,10 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 import pytest
 
-from cicd_harness.command import CommandRunner
-from cicd_harness.config import load_profile
 from cicd_harness.controllers import ControllerStack
-from cicd_harness.kind import KindCluster
-from cicd_harness.kubectl import Kubectl
 from cicd_harness.rollouts import RolloutProbe
 
 pytestmark = [
@@ -18,14 +13,8 @@ pytestmark = [
 ]
 
 
-def test_argo_rollout_updates_istio_virtual_service() -> None:
-    workspace = Path(__file__).parents[1]
-    profile_name = os.getenv("CICD_PROFILE", "modern")
-    profile = load_profile(workspace / f"profiles/{profile_name}.yaml", workspace=workspace)
-    runner = CommandRunner(cwd=workspace)
-    cluster = KindCluster(profile, runner)
-    cluster.create()
-    kubectl = Kubectl(cluster.context, runner)
+def test_argo_rollout_updates_istio_virtual_service(poc_cluster) -> None:
+    workspace, profile, runner, _cluster, kubectl = poc_cluster
     controllers = ControllerStack(profile, kubectl, runner)
     controllers.install_argo_rollouts()
     controllers.install_istio()

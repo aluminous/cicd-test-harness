@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+import os
 import shutil
 import sys
 import time
 from pathlib import Path
 
 from cicd_harness import __version__
+from cicd_harness.airgap import audit_airgap, validate_airgap
 from cicd_harness.command import CommandRunner
 from cicd_harness.component import ComponentGraph
 from cicd_harness.components import default_components, select_components
@@ -15,11 +18,13 @@ from cicd_harness.config import HarnessProfile, load_profile_argument
 from cicd_harness.endpoints import EndpointCatalog, HostEndpoint, HostEndpointManager
 from cicd_harness.environment import HarnessEnvironment
 from cicd_harness.errors import HarnessError
+from cicd_harness.jenkins import JenkinsStack
 from cicd_harness.kind import KindCluster
 from cicd_harness.kubectl import Kubectl
 from cicd_harness.native_pilot import NativePilotBuilder
 from cicd_harness.registry import RegistrySupport
 from cicd_harness.tooling import ensure_kind_binary
+from cicd_harness.trust import TrustSupport, ssl_context
 
 
 def _workspace() -> Path:
@@ -66,6 +71,20 @@ def _endpoint_rows(endpoints: tuple[HostEndpoint, ...]) -> str:
     )
 
 
+def _configure_logging(level: str, log_file: Path | None) -> None:
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if log_file is not None:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        handlers.append(logging.FileHandler(log_file))
+    logging.basicConfig(
+        level=getattr(logging, level),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+        handlers=handlers,
+        force=True,
+    )
+
+
 def main() -> None:
     try:
         _main()
@@ -77,6 +96,18 @@ def main() -> None:
 def _main() -> None:
     parser = argparse.ArgumentParser(prog="cicd-harness")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument(
+        "--log-level",
+        choices=("DEBUG", "INFO", "WARNING", "ERROR"),
+        default=os.getenv("CICD_HARNESS_LOG_LEVEL", "INFO").upper(),
+        help="lifecycle/command log verbosity (default: INFO)",
+    )
+    parser.add_argument(
+        "--log-file",
+        type=Path,
+        default=(Path(value) if (value := os.getenv("CICD_HARNESS_LOG_FILE")) else None),
+        help="also append logs to this file",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     profile_parser = subparsers.add_parser("profile")
@@ -136,11 +167,16 @@ def _main() -> None:
         action="store_true",
         help="download and verify the profile-pinned Kind binary",
     )
+    airgap_parser = subparsers.add_parser("airgap")
+    airgap_subparsers = airgap_parser.add_subparsers(dest="airgap_command", required=True)
+    airgap_check_parser = airgap_subparsers.add_parser("check")
+    airgap_check_parser.add_argument("profile")
+    airgap_check_parser.add_argument("--json", action="store_true")
     image_parser = subparsers.add_parser("image")
     image_subparsers = image_parser.add_subparsers(dest="image_command", required=True)
     image_build_parser = image_subparsers.add_parser("build")
     image_build_parser.add_argument("profile")
-    image_build_parser.add_argument("recipe", choices=("istio-pilot-arm64",))
+    image_build_parser.add_argument("recipe", choices=("istio-pilot-arm64", "jenkins"))
     image_build_parser.add_argument(
         "--runtime",
         choices=("docker", "podman"),
@@ -156,6 +192,7 @@ def _main() -> None:
     image_build_parser.add_argument("--push", action="store_true")
 
     args = parser.parse_args()
+    _configure_logging(args.log_level, args.log_file)
     workspace = _workspace()
     if args.command == "profile":
         profile = load_profile_argument(args.name, workspace=workspace)
@@ -175,31 +212,102 @@ def _main() -> None:
             update={"runtime": profile.runtime.model_copy(update={"provider": runtime_override})}
         )
     runner = CommandRunner(cwd=workspace)
-    if args.command == "image":
-        native_pilot = profile.istio.arm64_pilot if profile.istio is not None else None
-        if native_pilot is None:
-            raise HarnessError(f"profile {profile.name!r} has no ARM64 pilot image recipe")
-        if args.tag:
-            native_pilot = native_pilot.model_copy(update={"image": args.tag})
-        registry = RegistrySupport(profile, runner)
-        registry.install_runtime_auth(profile.runtime.provider)
-        try:
-            builder = NativePilotBuilder(
-                profile,
-                native_pilot,
-                runner,
-                registry,
-                builder_platform=args.builder_platform,
+    if args.command == "airgap":
+        if not profile.airgap.enabled:
+            raise HarnessError(
+                f"profile {profile.name!r} does not enable air-gap enforcement"
             )
-            image = builder.build(force=args.force)
-            if args.push:
-                builder.push()
+        dependencies = audit_airgap(profile)
+        if args.json:
+            print(json.dumps([item.as_dict() for item in dependencies], indent=2))
+        else:
+            headings = (
+                "STATUS",
+                "STAGE",
+                "KIND",
+                "DEPENDENCY",
+                "SOURCE",
+                "EFFECTIVE SOURCE",
+            )
+            rows = [
+                (
+                    "ok" if item.allowed else "blocked",
+                    item.stage,
+                    item.kind,
+                    item.name,
+                    item.source,
+                    item.effective,
+                )
+                for item in dependencies
+            ]
+            widths = [
+                max(len(headings[index]), *(len(row[index]) for row in rows))
+                for index in range(len(headings))
+            ]
+            for row in (headings, *rows):
+                print(
+                    "  ".join(
+                        value.ljust(widths[index]) for index, value in enumerate(row)
+                    )
+                )
+        validate_airgap(profile)
+        return
+    if args.command == "image":
+        if args.recipe == "jenkins" and args.tag:
+            if profile.jenkins is None:
+                raise HarnessError(f"profile {profile.name!r} has no Jenkins image recipe")
+            profile = profile.model_copy(
+                update={"jenkins": profile.jenkins.model_copy(update={"image": args.tag})}
+            )
+        if profile.airgap.enabled:
+            validate_airgap(profile)
+        trust = TrustSupport(profile, runner)
+        registry = RegistrySupport(profile, runner)
+        trust.install_client_env()
+        try:
+            trust.prepare_runtime(profile.runtime.provider)
+            registry.install_runtime_auth(profile.runtime.provider)
+            if args.recipe == "jenkins":
+                if profile.jenkins is None:
+                    raise HarnessError(f"profile {profile.name!r} has no Jenkins image recipe")
+                stack = JenkinsStack(
+                    profile,
+                    Kubectl(f"kind-{profile.kind.cluster_name}", runner),
+                    registry,
+                )
+                image = stack.build_image(force=args.force)
+                if args.push:
+                    stack.push_image()
+            else:
+                native_pilot = (
+                    profile.istio.arm64_pilot if profile.istio is not None else None
+                )
+                if native_pilot is None:
+                    raise HarnessError(
+                        f"profile {profile.name!r} has no ARM64 pilot image recipe"
+                    )
+                if args.tag:
+                    native_pilot = native_pilot.model_copy(update={"image": args.tag})
+                builder = NativePilotBuilder(
+                    profile,
+                    native_pilot,
+                    runner,
+                    registry,
+                    builder_platform=args.builder_platform,
+                )
+                image = builder.build(force=args.force)
+                if args.push:
+                    builder.push()
             print(image)
         finally:
             registry.close()
+            trust.close()
         return
     if args.command == "doctor":
         checks: list[tuple[str, bool, str]] = []
+        airgap_dependencies = (
+            validate_airgap(profile) if profile.airgap.enabled else ()
+        )
         for executable in (profile.runtime.provider, "kubectl", "helm", "git"):
             path = shutil.which(executable)
             checks.append(
@@ -223,7 +331,13 @@ def _main() -> None:
                 )
             )
         if args.prepare:
-            binary = ensure_kind_binary(profile.kind)
+            binary = ensure_kind_binary(
+                profile.kind,
+                verify=ssl_context(
+                    profile.trust.ca_certificate,
+                    insecure_skip_tls_verify=profile.trust.insecure_skip_tls_verify,
+                ),
+            )
             checks.append(("kind", True, f"verified at {binary}"))
         elif profile.kind.binary.is_file():
             checks.append(("kind", True, f"cached at {profile.kind.binary}"))
@@ -233,6 +347,34 @@ def _main() -> None:
                     "kind",
                     True,
                     f"will download and verify v{profile.kind.version} on first use",
+                )
+            )
+        if profile.airgap.enabled:
+            checks.append(
+                (
+                    "air-gap preflight",
+                    True,
+                    f"{len(airgap_dependencies)} controlled dependencies use allowed hosts",
+                )
+            )
+        if profile.trust.ca_certificate is not None:
+            ssl_context(
+                profile.trust.ca_certificate,
+                insecure_skip_tls_verify=profile.trust.insecure_skip_tls_verify,
+            )
+            checks.append(
+                (
+                    "private CA",
+                    True,
+                    f"valid PEM trust anchor at {profile.trust.ca_certificate}",
+                )
+            )
+        if profile.trust.insecure_skip_tls_verify:
+            checks.append(
+                (
+                    "unsafe TLS fallback",
+                    True,
+                    "certificate and hostname verification disabled where supported",
                 )
             )
         width = max(len(name) for name, _, _ in checks)
@@ -280,6 +422,8 @@ def _main() -> None:
 
     cluster = KindCluster(profile, runner)
     if args.command == "cluster-up":
+        if profile.airgap.enabled:
+            validate_airgap(profile)
         cluster.create()
         print(cluster.context)
     elif args.command == "cluster-down":

@@ -7,13 +7,9 @@ from uuid import uuid4
 
 import pytest
 
-from cicd_harness.command import CommandRunner
-from cicd_harness.config import load_profile
 from cicd_harness.controllers import ControllerStack
 from cicd_harness.gitea import GiteaClient, GitWorkspace
 from cicd_harness.infra import InfraStack
-from cicd_harness.kind import KindCluster
-from cicd_harness.kubectl import Kubectl
 from cicd_harness.rollouts import RolloutProbe
 from cicd_harness.spinnaker import (
     SpinnakerClient,
@@ -31,7 +27,7 @@ pytestmark = [
 ]
 
 
-def test_raw_and_kustomize_pipelines_drive_argo_rollouts(tmp_path: Path) -> None:
+def test_raw_and_kustomize_pipelines_drive_argo_rollouts(tmp_path, poc_cluster) -> None:
     """Exercise exact-commit Git artifacts through the minimal Spinnaker slice.
 
     The raw pipeline is deployed twice so the second execution exposes both the
@@ -40,13 +36,7 @@ def test_raw_and_kustomize_pipelines_drive_argo_rollouts(tmp_path: Path) -> None
     wiring and artifact propagation.
     """
 
-    workspace = Path(__file__).parents[1]
-    profile_name = os.getenv("CICD_PROFILE", "modern")
-    profile = load_profile(workspace / f"profiles/{profile_name}.yaml", workspace=workspace)
-    runner = CommandRunner(cwd=workspace)
-    cluster = KindCluster(profile, runner)
-    cluster.create()
-    kubectl = Kubectl(cluster.context, runner)
+    workspace, profile, runner, cluster, kubectl = poc_cluster
 
     controllers = ControllerStack(profile, kubectl, runner)
     controllers.install_argo_rollouts(timeout=600)

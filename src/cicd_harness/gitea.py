@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ssl
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,6 +31,7 @@ class GiteaClient:
         *,
         username: str = "harness",
         password: str = "harness-password",
+        verify: bool | ssl.SSLContext = True,
     ) -> None:
         self.username = username
         self.password = password
@@ -36,6 +39,7 @@ class GiteaClient:
             base_url=base_url,
             auth=(username, password),
             timeout=30,
+            verify=verify,
         )
 
     def close(self) -> None:
@@ -70,9 +74,14 @@ class GiteaClient:
 
 
 class GitWorkspace:
-    def __init__(self, path: Path) -> None:
+    def __init__(
+        self,
+        path: Path,
+        *,
+        base_env: Mapping[str, str] | None = None,
+    ) -> None:
         self.path = path
-        self.runner = CommandRunner(cwd=path)
+        self.runner = CommandRunner(cwd=path, base_env=base_env)
 
     def initialize(self) -> None:
         self.runner.run(["git", "init", "--initial-branch=main"])

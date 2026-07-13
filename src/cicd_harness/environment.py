@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
+from cicd_harness.airgap import validate_airgap
 from cicd_harness.command import CommandRunner
 from cicd_harness.component import ComponentGraph, EnvironmentComponent, EnvironmentContext
 from cicd_harness.components import default_components, select_components
@@ -9,6 +11,8 @@ from cicd_harness.config import HarnessProfile
 from cicd_harness.kind import KindCluster
 from cicd_harness.kubectl import Kubectl
 from cicd_harness.registry import RegistrySupport
+
+logger = logging.getLogger(__name__)
 
 
 class HarnessEnvironment:
@@ -63,10 +67,23 @@ class HarnessEnvironment:
         *,
         timeout: int = 900,
     ) -> None:
+        if self.profile.airgap.enabled:
+            dependencies = validate_airgap(self.profile)
+            logger.info(
+                "air-gap preflight passed for %d controlled dependencies",
+                len(dependencies),
+            )
+        logger.info(
+            "starting environment %s with components: %s",
+            self.profile.name,
+            ", ".join(self.components.order) or "none",
+        )
         self.cluster.create()
         self.components.start(self.context, timeout=timeout)
+        logger.info("environment %s is ready", self.profile.name)
 
     def down(self) -> None:
+        logger.info("stopping environment %s", self.profile.name)
         component_error: Exception | None = None
         try:
             self.components.stop(self.context)
@@ -79,3 +96,4 @@ class HarnessEnvironment:
                 self.registry.close()
         if component_error is not None:
             raise component_error
+        logger.info("environment %s has stopped", self.profile.name)

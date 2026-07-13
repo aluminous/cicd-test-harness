@@ -1,5 +1,26 @@
 ARG JENKINS_BASE_IMAGE=docker.io/jenkins/jenkins:2.426.1-lts-jdk17
 FROM ${JENKINS_BASE_IMAGE}
 
+ARG JENKINS_UC=https://updates.jenkins.io
+ARG JENKINS_UC_EXPERIMENTAL=https://updates.jenkins.io/experimental
+ARG JENKINS_INCREMENTALS_REPO_MIRROR=https://repo.jenkins-ci.org/incrementals
+ARG JENKINS_UC_DOWNLOAD=https://updates.jenkins.io/download
+ARG JENKINS_PLUGIN_INFO=https://updates.jenkins.io/current/plugin-versions.json
+ENV JENKINS_UC=${JENKINS_UC} \
+    JENKINS_UC_EXPERIMENTAL=${JENKINS_UC_EXPERIMENTAL} \
+    JENKINS_INCREMENTALS_REPO_MIRROR=${JENKINS_INCREMENTALS_REPO_MIRROR} \
+    JENKINS_UC_DOWNLOAD=${JENKINS_UC_DOWNLOAD} \
+    JENKINS_PLUGIN_INFO=${JENKINS_PLUGIN_INFO}
+
+USER root
+COPY corporate-ca.crt /tmp/cicd-harness-corporate-ca.crt
+RUN if [ -s /tmp/cicd-harness-corporate-ca.crt ]; then \
+      cp /tmp/cicd-harness-corporate-ca.crt \
+        /usr/local/share/ca-certificates/cicd-harness-corporate-ca.crt && \
+      update-ca-certificates; \
+    fi && \
+    rm -f /tmp/cicd-harness-corporate-ca.crt
+USER jenkins
+
 COPY --chown=jenkins:jenkins plugins.txt /usr/share/jenkins/ref/plugins.txt
 RUN jenkins-plugin-cli --plugin-file /usr/share/jenkins/ref/plugins.txt --latest=false

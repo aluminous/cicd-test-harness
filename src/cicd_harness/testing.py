@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import ssl
 import time
 from collections.abc import Callable, Mapping
 from contextlib import ExitStack, suppress
@@ -49,6 +50,7 @@ from cicd_harness.testing_http import (
     ProxyAPI,
     WireMockRouting,
 )
+from cicd_harness.trust import ssl_context
 from cicd_harness.wiremock import WireMockClient
 
 
@@ -561,7 +563,10 @@ class GitAPI:
         )
         path = self.harness.workdir / "repositories" / repository_name
         path.mkdir(parents=True)
-        git = GitWorkspace(path)
+        git = GitWorkspace(
+            path,
+            base_env=self.harness.runtime.environment.runner.base_env,
+        )
         git.initialize()
         git.add_remote(self.harness._services.gitea().host_clone_url(remote))
         repository = TestRepository(remote=remote, path=path, git=git)
@@ -1574,6 +1579,13 @@ class _ServiceConnections:
         self._forwards: dict[str, PortForward] = {}
         self._clients: dict[str, Any] = {}
 
+    def _verify(self) -> ssl.SSLContext:
+        trust = self.harness.runtime.profile.trust
+        return ssl_context(
+            trust.ca_certificate,
+            insecure_skip_tls_verify=trust.insecure_skip_tls_verify,
+        )
+
     def has(self, name: str) -> bool:
         return name in self._clients
 
@@ -1606,7 +1618,9 @@ class _ServiceConnections:
                 service.resource,
                 service.port,
             ).url
-            self._clients["wiremock"] = self._stack.enter_context(WireMockClient(url))
+            self._clients["wiremock"] = self._stack.enter_context(
+                WireMockClient(url, verify=self._verify())
+            )
         return self._clients["wiremock"]
 
     def gitea(self) -> GiteaClient:
@@ -1622,7 +1636,9 @@ class _ServiceConnections:
                 service.resource,
                 service.port,
             ).url
-            self._clients["gitea"] = self._stack.enter_context(GiteaClient(url))
+            self._clients["gitea"] = self._stack.enter_context(
+                GiteaClient(url, verify=self._verify())
+            )
         return self._clients["gitea"]
 
     def jenkins(self) -> JenkinsClient:
@@ -1638,7 +1654,9 @@ class _ServiceConnections:
                 service.resource,
                 service.port,
             ).url
-            self._clients["jenkins"] = self._stack.enter_context(JenkinsClient(url))
+            self._clients["jenkins"] = self._stack.enter_context(
+                JenkinsClient(url, verify=self._verify())
+            )
         return self._clients["jenkins"]
 
     def spinnaker(self) -> SpinnakerClient:
@@ -1654,7 +1672,9 @@ class _ServiceConnections:
                 service.resource,
                 service.port,
             ).url
-            self._clients["spinnaker"] = self._stack.enter_context(SpinnakerClient(url))
+            self._clients["spinnaker"] = self._stack.enter_context(
+                SpinnakerClient(url, verify=self._verify())
+            )
         return self._clients["spinnaker"]
 
     def application(
@@ -1672,7 +1692,7 @@ class _ServiceConnections:
                 port,
             ).url
             self._clients[key] = self._stack.enter_context(
-                httpx.Client(base_url=url, timeout=30)
+                httpx.Client(base_url=url, timeout=30, verify=self._verify())
             )
         return ApplicationService(
             name=name,

@@ -412,9 +412,55 @@ covers named ServiceAccounts. For an additional namespace use
 when generating a Git manifest that Spinnaker will later fetch without passing through
 `harness.resources`.
 
-v1 assumes the registry certificate is already trusted by the host runtime and Kind
-node. An insecure registry or private CA requires runtime/Kind trust configuration and
-is not yet modeled by the profile.
+For an internal registry, Nexus, or corporate TLS interception proxy, add one PEM root:
+
+```yaml
+trust:
+  ca_certificate: certificates/corporate-ca.pem
+```
+
+Relative paths resolve from the project workspace. Public roots remain trusted. The
+harness uses the resulting combined bundle for its HTTP downloads and subprocesses,
+installs the private root into a rootful macOS Podman VM and the Kind node/containerd,
+and creates `harness-trust-bundle` in every managed namespace. Manifests rendered through
+the harness receive a read-only bundle plus common Git/curl/Python/Go/Node TLS variables.
+Jenkins has the root baked into its fingerprinted image; WireMock and the five Java
+Spinnaker services construct additive Java trust stores with init containers.
+
+Docker/DinD's daemon trust must be configured before the harness starts because its first
+operation may be pulling the Kind node image. Arbitrary Java application images do not
+consume PEM environment variables; bake the CA into those images or provide their own
+Java trust-store configuration.
+
+As an emergency fallback for a disposable, isolated test network, verification can be
+disabled globally:
+
+```yaml
+trust:
+  # Keeping the CA is useful for clients that do not support the fallback.
+  ca_certificate: certificates/corporate-ca.pem
+  insecure_skip_tls_verify: true
+```
+
+If the CA file itself is invalid or cannot be installed, remove `ca_certificate`; the
+harness still validates explicitly configured trust material even when the fallback is
+enabled.
+
+The harness applies the fallback to its own HTTP clients and generated Git workspaces;
+common Git, curl, wget, Node, Python, and Go process settings in every managed workload;
+Podman pull/build/push; Kind containerd for every profile-controlled image registry;
+WireMock proxy targets; and Gitea webhooks. Workloads also receive
+`CICD_HARNESS_INSECURE_SKIP_TLS_VERIFY=1`, so a test application can map the profile-wide
+choice to its HTTP library's native option. Existing environment values in a test-authored
+manifest win over the injected defaults.
+
+This setting does not disable TLS for the Kubernetes API, kubelet, or control-plane
+components. Docker/DinD has no per-pull equivalent and must be configured with daemon
+insecure-registry settings before startup. There is no universal trust-all switch for
+arbitrary JVM libraries, Go HTTPS proxy clients, or Python libraries such as Requests;
+those must consume the marker or use an HTTP WireMock reverse proxy. In particular, use
+the CA for Jenkins plugin installation and arbitrary Spinnaker HTTPS artifact clients
+when possible. `doctor` reports the fallback prominently, and startup logs a warning.
 
 ## Low-level escape hatch
 

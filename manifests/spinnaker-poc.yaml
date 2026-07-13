@@ -294,6 +294,15 @@ spec:
               value: harness-minio
             - name: MINIO_ROOT_PASSWORD
               value: harness-minio-password
+            # MinIO performs release/SUBNET lookups from its server and bundled
+            # browser console. Neither the console nor those calls are useful
+            # inside this disposable, API-only object store.
+            - name: MINIO_UPDATE
+              value: "off"
+            - name: MINIO_CALLHOME_ENABLE
+              value: "off"
+            - name: MINIO_BROWSER
+              value: "off"
           ports:
             - containerPort: 9000
           resources:
@@ -337,6 +346,12 @@ spec:
       labels:
         app: spin-front50
     spec:
+      # Kork 7.99.1 consumes its default-repository flag before Spring binds
+      # configuration. Keep its two hard-coded GitHub plugin indexes local;
+      # plugins are outside this minimal Spinnaker slice's test contract.
+      hostAliases:
+        - ip: "127.0.0.1"
+          hostnames: [raw.githubusercontent.com]
       containers:
         - name: front50
           image: us-docker.pkg.dev/spinnaker-community/docker/front50:0.26.2-20210216140019
@@ -400,6 +415,9 @@ spec:
       labels:
         app: spin-rosco
     spec:
+      hostAliases:
+        - ip: "127.0.0.1"
+          hostnames: [raw.githubusercontent.com]
       containers:
         - name: rosco
           image: us-docker.pkg.dev/spinnaker-community/docker/rosco:0.24.0-20210210110018
@@ -462,6 +480,9 @@ spec:
         app: spin-clouddriver
     spec:
       serviceAccountName: clouddriver
+      hostAliases:
+        - ip: "127.0.0.1"
+          hostnames: [raw.githubusercontent.com]
       containers:
         - name: clouddriver
           image: us-docker.pkg.dev/spinnaker-community/docker/clouddriver:7.3.3-20210322155326
@@ -524,6 +545,9 @@ spec:
       labels:
         app: spin-orca
     spec:
+      hostAliases:
+        - ip: "127.0.0.1"
+          hostnames: [raw.githubusercontent.com]
       containers:
         - name: orca
           image: us-docker.pkg.dev/spinnaker-community/docker/orca:2.19.0-20210209140018
@@ -583,6 +607,9 @@ spec:
       labels:
         app: spin-gate
     spec:
+      hostAliases:
+        - ip: "127.0.0.1"
+          hostnames: [raw.githubusercontent.com]
       containers:
         - name: gate
           image: us-docker.pkg.dev/spinnaker-community/docker/gate:1.21.0-20210215200018

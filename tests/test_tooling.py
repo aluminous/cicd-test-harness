@@ -42,6 +42,29 @@ def test_missing_kind_binary_is_downloaded_verified_and_made_executable(
     assert requests[0].url.path.endswith(f"/kind-{host_platform()}")
 
 
+def test_kind_binary_can_be_downloaded_from_an_internal_template(tmp_path: Path) -> None:
+    payload = b"internal-kind-binary"
+    checksum = hashlib.sha256(payload).hexdigest()
+    config = _kind_config(tmp_path / "kind", checksum).model_copy(
+        update={
+            "download_url_template": (
+                "https://nexus.corp.example/repository/kind/v{version}/kind-{platform}"
+            )
+        }
+    )
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, content=payload)
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        ensure_kind_binary(config, client=client)
+
+    assert requests[0].url.host == "nexus.corp.example"
+    assert requests[0].url.path.endswith(f"/v0.31.0/kind-{host_platform()}")
+
+
 def test_existing_kind_binary_must_match_profile_checksum(tmp_path: Path) -> None:
     target = tmp_path / "kind"
     target.write_bytes(b"unexpected")

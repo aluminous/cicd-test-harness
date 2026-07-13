@@ -91,6 +91,8 @@ spec:
               value: >-
                 -Djenkins.install.runSetupWizard=false
                 -Dhudson.security.csrf.GlobalCrumbIssuerConfiguration.DISABLE_CSRF_PROTECTION=true
+                -Dhudson.model.UpdateCenter.never=true
+                -Dhudson.model.DownloadService$Downloadable.defaultInterval=9223372036854775807
                 -Xms128m -Xmx512m -Xss512k -XX:MaxMetaspaceSize=256m
           ports:
             - name: http

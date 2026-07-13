@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import platform
+import ssl
 import stat
 from pathlib import Path
 
@@ -9,6 +11,8 @@ import httpx
 
 from cicd_harness.config import KindConfig
 from cicd_harness.errors import HarnessError
+
+logger = logging.getLogger(__name__)
 
 
 def host_platform() -> str:
@@ -28,7 +32,12 @@ def host_platform() -> str:
     return f"{system}-{architecture}"
 
 
-def ensure_kind_binary(config: KindConfig, *, client: httpx.Client | None = None) -> Path:
+def ensure_kind_binary(
+    config: KindConfig,
+    *,
+    client: httpx.Client | None = None,
+    verify: ssl.SSLContext | bool = True,
+) -> Path:
     """Install and verify the profile-pinned Kind binary when it is absent."""
 
     target = config.binary
@@ -51,9 +60,17 @@ def ensure_kind_binary(config: KindConfig, *, client: httpx.Client | None = None
 
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(f".{target.name}.download")
-    url = f"https://kind.sigs.k8s.io/dl/v{config.version}/kind-{platform_key}"
+    url = config.download_url_template.format(
+        version=config.version,
+        platform=platform_key,
+    )
+    logger.info("downloading Kind v%s for %s from %s", config.version, platform_key, url)
     owns_client = client is None
-    resolved_client = client or httpx.Client(follow_redirects=True, timeout=120)
+    resolved_client = client or httpx.Client(
+        follow_redirects=True,
+        timeout=120,
+        verify=verify,
+    )
     try:
         with resolved_client.stream("GET", url) as response:
             response.raise_for_status()
@@ -70,6 +87,7 @@ def ensure_kind_binary(config: KindConfig, *, client: httpx.Client | None = None
             temporary.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
         )
         temporary.replace(target)
+        logger.info("installed verified Kind binary at %s", target)
     except Exception as exc:
         temporary.unlink(missing_ok=True)
         if isinstance(exc, HarnessError):

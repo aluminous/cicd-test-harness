@@ -99,6 +99,19 @@ class RolloutKubectl:
         }
 
 
+def test_git_workspace_inherits_harness_tls_environment(tmp_path: Path) -> None:
+    git = GitWorkspace(
+        tmp_path,
+        base_env={
+            "CICD_HARNESS_INSECURE_SKIP_TLS_VERIFY": "1",
+            "GIT_SSL_NO_VERIFY": "true",
+        },
+    )
+
+    assert git.runner.base_env["CICD_HARNESS_INSECURE_SKIP_TLS_VERIFY"] == "1"
+    assert git.runner.base_env["GIT_SSL_NO_VERIFY"] == "true"
+
+
 def test_rollout_handle_exposes_canary_and_scale_down_assertions() -> None:
     rollout = RolloutHandle(RolloutKubectl(), namespace="apps", name="payments")  # type: ignore[arg-type]
 

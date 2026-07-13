@@ -303,10 +303,24 @@ field with that name. Rewriting is restricted to Kubernetes container lists.
 
 Credentials are resolved only from named environment variables. Auth files are private
 and ephemeral, error messages mention missing variable names rather than values, and
-resolved passwords are passed to diagnostic redaction. The v1 trust boundary is a
-registry whose TLS certificate is already trusted by both the runtime and Kind node;
-private-CA and insecure-registry configuration needs a separate design, especially for
-remote Podman where a host path is not automatically a VM path.
+resolved passwords are passed to diagnostic redaction.
+
+Private CA support cannot be implemented as only `SSL_CERT_FILE`. The runtime pulls the
+Kind node before Kubernetes exists; remote Podman executes inside a VM; Kind has a second
+containerd trust boundary; Java ignores PEM client variables; and replacing a bundle can
+accidentally discard public roots. The profile therefore accepts one additive PEM root.
+It is combined with platform roots for host/common workload clients, installed into the
+rootful macOS Podman machine and Kind node, baked into Jenkins, and converted to an
+additive Java trust store by WireMock/Spinnaker init containers. Docker daemon bootstrap
+and arbitrary application Java trust stores remain explicit platform/application duties.
+
+The Podman VM is rpm-ostree based. Installing a diagnostic package with
+`rpm-ostree install --apply-live` can download successfully but fail because the live
+overlay changes directories, leaving an interrupted live-commit marker or pending
+deployment. Do not mutate the VM merely to audit a test. For the DNS audit, extracting a
+signature-verified Fedora `tcpdump` RPM beneath `/var/tmp` provided a disposable binary
+without changing the booted deployment; clean any failed pending deployment before the
+test. Capture on `any` inside the VM covers container/Kind traffic but not host macOS DNS.
 
 ## Application-flow DX audit
 
@@ -394,3 +408,130 @@ macOS host, called both APIs, captured their catalog in diagnostics, and tore th
 graph down in 66.40 seconds. A separate intentional-failure acceptance retained its
 unique namespace and ConfigMap, reattached WireMock using the exact printed command, and
 deleted the unique pytest cluster using the printed `--cluster-name` cleanup command.
+
+## Air-gap dependency control
+
+Treat disconnected support as two separate phases: connected artifact staging and
+disconnected environment execution. Jenkins plugin resolution and the legacy Istio ARM
+compile belong to staging whenever possible; the resulting images are immutable runtime
+inputs. A pull-only policy must fail on a missing or stale fingerprint instead of quietly
+switching back to an online build.
+
+Front50's `s3` configuration was initially suspicious, but the effective endpoint is the
+in-cluster MinIO service. Audit effective configuration rather than feature names: the
+actual external gaps were the Kind binary, public OCI registries, Jenkins update sites,
+the legacy Istio source archive, and Go module/checksum services. The vendored charts and
+manifests do not fetch their original release repositories at install time.
+
+Static profile validation is necessary but insufficient. Application manifests are
+created after startup, so image allowlisting also belongs in the shared manifest rendering
+path. Conversely, test-authored Jenkinsfiles and Spinnaker stages contain arbitrary code
+and URLs; an OS/network egress deny remains the authoritative guardrail for those paths.
+
+Prefer distributing the CA over disabling verification. Trust must exist in the host or
+CI container, a Docker daemon or remote Podman VM, Kind/containerd, and connected image
+builder bases. Remote Podman is a particular trap because a macOS path is not necessarily
+a VM path. The emergency `insecure_skip_tls_verify` option therefore cannot be one magic
+environment variable: it maps to harness HTTP SSL contexts, Git/curl/wget/Node settings,
+Podman's CLI switch, host-scoped Kind containerd `certs.d` files, WireMock, Gitea, and a
+harness marker for application-native handling. Docker/DinD bootstrap and arbitrary JVM,
+Go, or Python library clients remain explicit daemon/application concerns. Never weaken
+Kubernetes control-plane TLS just to make an internal registry usable.
+
+Containerd registry namespaces are not always literal endpoints. `docker.io` is a logical
+namespace whose registry server is `registry-1.docker.io`; writing the logical hostname
+as `hosts.toml`'s server makes containerd request image layers from the Docker Hub website
+and fail with an unexpected `text/html` media type. Keep the configuration directory named
+`docker.io`, but use the registry endpoint as its `server` and host entry. Private registry
+names and the other controlled public registry names are literal in the current profiles.
+
+WireMock 3.13.1 exposes `--trust-all-proxy-targets`, but that setting belongs to browser
+proxying and this pinned image fails at startup if it is supplied without
+`--enable-browser-proxying`. Harness proxy mappings use reverse-proxy mode, which already
+trusts target certificates by default. Do not change WireMock's operating mode merely to
+make the global fallback look more explicit; preserve reverse-proxy semantics and pass the
+harness marker for any future application-specific integration.
+
+Containerd 1.x and 2.x registry configuration cannot be patched with both plugin tables
+at once. The containerd 2 table caused the Kubernetes 1.21 node's kubelet/containerd
+bootstrap to fail. The pinned 1.21 node also contains a legacy `k8s.gcr.io` mirror, and
+containerd 1.6 rejects combining that `registry.mirrors` table with `config_path`. It
+therefore receives host-scoped legacy `registry.configs.<host>.tls.insecure_skip_verify`
+entries. Kind node images produced by Kind 0.27 and newer already enable
+`/etc/containerd/certs.d` and use `hosts.toml`. This keeps the version distinction out of
+individual tests without deleting the old node's required mirror.
+
+## Air-gap validation findings
+
+Allowed-host validation has two layers. The static preflight inventories the effective
+Kind download URL, rewritten Kind/component/controller images, Jenkins image-build
+mirrors, legacy Istio source/Go endpoints, and URLs embedded in the Spinnaker manifest.
+It compares normalized exact hosts, exact host/port pairs, or wildcard subdomains with
+`airgap.allowed_hosts`. The shared manifest renderer repeats image validation for
+test-authored Kubernetes resources. Unit tests prove rejection of unmirrored registries,
+external Spinnaker storage, Go's `direct` fallback, and public application images.
+
+That model deliberately does not claim to be a firewall. A cold-cache rootful Podman run
+was therefore captured with `tcpdump` on the VM's `any` interface, starting before each
+focused PoC. This observes Podman bridges, the Kind node, and pod traffic after it enters
+the VM; macOS-host traffic is outside that boundary. Capturing `any` repeats the same DNS
+packet as it crosses several interfaces, so packet counts are not request counts. Podman's
+resolver also emits randomized HINFO probes and search-suffix attempts; normalize query
+names and correlate timestamps/source addresses rather than treating every line as a new
+application request.
+
+The audit found four nonessential runtime lookups that the original static inventory
+could not see:
+
+- Jenkins core still downloaded update-center tool metadata even when the ordinary update
+  center was disabled. `hudson.model.UpdateCenter.never=true` plus a practically infinite
+  `hudson.model.DownloadService$Downloadable.defaultInterval` disables both paths. Plugin
+  resolution remains a connected image-build operation and uses the configured Nexus
+  endpoints in an air-gap profile.
+- MinIO performed an update lookup and its bundled browser console contacted SUBNET.
+  `MINIO_UPDATE=off`, `MINIO_CALLHOME_ENABLE=off`, and `MINIO_BROWSER=off` make this API-only
+  Front50 store quiet. A captured replacement-pod startup contained only the internal
+  `spin-redis` service name and no `dl.min.io` or `subnet.min.io` query.
+- Istio's platform detection queried `metadata.google.internal` even on Kind. Setting
+  `GCE_METADATA_HOST=127.0.0.1:9` for istiod and the one ingress gateway keeps the harmless
+  detection attempt on closed loopback without making the harness depend on Istio for
+  egress control.
+- Kork 7.99.1 enables Spinnaker's default remote plugin repositories and immediately
+  refreshes `raw.githubusercontent.com`. In this historical release, both the documented
+  YAML property and the equivalent JVM system property were present but consumed too late
+  to affect plugin-cache initialization. All five Java pods therefore use a narrow
+  `hostAliases` mapping of that hostname to loopback. A capture spanning several scheduled
+  refresh intervals had no matching DNS query after the replacement pods' creation time.
+  This is version-specific containment, not a general outbound policy; remove or replace
+  it with an internal repository configuration if plugin loading becomes a test goal.
+
+Useful upstream anchors for repeating this audit are Jenkins 2.426.1's
+[`UpdateCenter`](https://github.com/jenkinsci/jenkins/blob/jenkins-2.426.1/core/src/main/java/hudson/model/UpdateCenter.java)
+and [`DownloadService`](https://github.com/jenkinsci/jenkins/blob/jenkins-2.426.1/core/src/main/java/hudson/model/DownloadService.java),
+MinIO's pinned
+[`MINIO_*` constants](https://github.com/minio/minio/blob/RELEASE.2024-10-29T16-01-48Z/internal/config/constants.go),
+and Kork 7.99.1's
+[`PluginsConfigurationProperties`](https://github.com/spinnaker/kork/blob/v7.99.1/kork-plugins/src/main/java/com/netflix/spinnaker/config/PluginsConfigurationProperties.java).
+Read the source matching the image tag: current documentation can describe behavior that
+did not yet bind correctly in these 2021 Spinnaker services.
+
+Expected cold-cache names were image registries and their signed CDN/object-store
+redirects. The Jenkins-focused trace also contained public Jenkins mirrors, but every one
+was timestamped to the derived-image build network before the Jenkins pod started; the
+air-gap profile redirects those build-time inputs to Nexus. Separate live controller,
+Jenkins, Spinnaker, and private-CA propagation tests passed and cleaned their clusters.
+The CA test verified the rootful VM anchor, Kind-node anchor, namespace bundle, and live
+WireMock Java trust-store alias; a release environment should additionally exercise its
+real TLS registry/Nexus certificate chain.
+
+One full combined run initially exhausted the 8 GiB budget because the direct PoC tests
+created a first Kind cluster without owning teardown, then the fixture created a second
+one. Direct PoCs now use a unique `poc_cluster` fixture with unconditional cleanup. This
+was a lifecycle leak, not Spinnaker's steady-state requirement, and is another reason every
+test-only substrate needs an explicit owner even when the process is expected to exit.
+
+Lifecycle logs should identify both semantic boundaries (component starting/ready) and
+subprocess boundaries (redacted command, exit code, elapsed time). Captured stdout/stderr
+is most useful at DEBUG, but it may contain application-defined secrets the harness does
+not know; CI systems must protect diagnostic artifacts even after known credentials and
+URL user information are redacted.

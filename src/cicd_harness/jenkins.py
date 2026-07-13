@@ -3,6 +3,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import shutil
+import ssl
+import tempfile
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -14,7 +17,7 @@ from xml.sax.saxutils import escape
 import httpx
 
 from cicd_harness.config import HarnessProfile
-from cicd_harness.errors import ReadinessError
+from cicd_harness.errors import HarnessError, ReadinessError
 from cicd_harness.kubectl import Kubectl
 from cicd_harness.registry import RegistrySupport
 
@@ -34,10 +37,11 @@ class JenkinsStack:
 
     def manifest(self) -> str:
         rendered = self.profile.jenkins.manifest.read_text()
-        return rendered.replace(
+        rendered = rendered.replace(
             "docker.io/jenkins/jenkins:2.426.1-lts-jdk17",
             self.registry.image(self.profile.jenkins.image),
         )
+        return self.registry.manifest(rendered)
 
     def install(self, *, timeout: int = 600) -> None:
         self.registry.ensure_namespace(self.kubectl, self.namespace)
@@ -48,37 +52,28 @@ class JenkinsStack:
     def prepare_image(self) -> None:
         provider = self.profile.runtime.provider
         image = self.registry.image(self.profile.jenkins.image)
-        base_image = self.registry.image(self.profile.jenkins.base_image)
         fingerprint = self._build_fingerprint()
-        inspect = self.kubectl.runner.run(
-            [provider, "image", "inspect", image],
-            check=False,
-            timeout=30,
-        )
-        local_fingerprint: str | None = None
-        if inspect.returncode == 0:
-            payload = json.loads(inspect.stdout)[0]
-            labels = payload.get("Labels") or payload.get("Config", {}).get("Labels") or {}
-            local_fingerprint = labels.get("io.harness.jenkins.fingerprint")
-        rebuilt = local_fingerprint != fingerprint
-        if rebuilt:
-            self.kubectl.runner.run(
-                [
-                    provider,
-                    "build",
-                    "--build-arg",
-                    f"JENKINS_BASE_IMAGE={base_image}",
-                    "--label",
-                    f"io.harness.jenkins.fingerprint={fingerprint}",
-                    "-t",
-                    image,
-                    "-f",
-                    self.profile.jenkins.containerfile,
-                    self.profile.jenkins.containerfile.parent,
-                ],
-                timeout=1200,
-            )
-        if not rebuilt and self._image_in_node():
+        image_changed = False
+        if self._local_fingerprint() != fingerprint:
+            policy = self.profile.jenkins.image_policy
+            if policy in {"pull-or-build", "pull-only"}:
+                pulled = self.kubectl.runner.run(
+                    [provider, "pull", *self.registry.runtime_tls_args(provider), image],
+                    check=False,
+                    timeout=900,
+                )
+                if pulled.returncode == 0:
+                    image_changed = True
+            if self._local_fingerprint() != fingerprint:
+                if policy == "pull-only":
+                    raise HarnessError(
+                        f"prebuilt Jenkins image {image!r} is unavailable or does not match "
+                        "the pinned Containerfile/plugins; build and push it with "
+                        f"'cicd-harness image build <profile> jenkins --push'"
+                    )
+                self.build_image(force=True)
+                image_changed = True
+        if not image_changed and self._image_in_node():
             return
         if provider == "podman":
             digest = hashlib.sha256(image.encode()).hexdigest()[:16]
@@ -115,6 +110,94 @@ class JenkinsStack:
                 timeout=600,
             )
 
+    def build_image(self, *, force: bool = False) -> str:
+        """Build the pinned Jenkins/plugin image, using configured mirror endpoints."""
+
+        provider = self.profile.runtime.provider
+        image = self.registry.image(self.profile.jenkins.image)
+        fingerprint = self._build_fingerprint()
+        if not force and self._local_fingerprint() == fingerprint:
+            return image
+        with tempfile.TemporaryDirectory(prefix="cicd-harness-jenkins-build-") as temporary:
+            context = Path(temporary)
+            shutil.copytree(
+                self.profile.jenkins.containerfile.parent,
+                context,
+                dirs_exist_ok=True,
+            )
+            shutil.copyfile(self.profile.jenkins.plugins_file, context / "plugins.txt")
+            ca_certificate = self.profile.trust.ca_certificate
+            (context / "corporate-ca.crt").write_bytes(
+                ca_certificate.read_bytes() if ca_certificate is not None else b""
+            )
+            command: list[str | Path] = [
+                provider,
+                "build",
+                *self.registry.runtime_tls_args(provider),
+            ]
+            build_args = {
+                "JENKINS_BASE_IMAGE": self.registry.image(self.profile.jenkins.base_image),
+                **self._plugin_build_args(),
+            }
+            for name, value in build_args.items():
+                command.extend(("--build-arg", f"{name}={value}"))
+            command.extend(
+                (
+                    "--label",
+                    f"io.harness.jenkins.fingerprint={fingerprint}",
+                    "-t",
+                    image,
+                    "-f",
+                    context / self.profile.jenkins.containerfile.name,
+                    context,
+                )
+            )
+            self.kubectl.runner.run(command, timeout=1200)
+        return image
+
+    def push_image(self) -> str:
+        image = self.registry.image(self.profile.jenkins.image)
+        if self._local_fingerprint() != self._build_fingerprint():
+            raise HarnessError(f"matching Jenkins image is not available locally: {image}")
+        self.kubectl.runner.run(
+            [
+                self.profile.runtime.provider,
+                "push",
+                *self.registry.runtime_tls_args(self.profile.runtime.provider),
+                image,
+            ],
+            timeout=900,
+        )
+        return image
+
+    def _local_fingerprint(self) -> str | None:
+        inspect = self.kubectl.runner.run(
+            [
+                self.profile.runtime.provider,
+                "image",
+                "inspect",
+                self.registry.image(self.profile.jenkins.image),
+            ],
+            check=False,
+            timeout=30,
+        )
+        if inspect.returncode != 0:
+            return None
+        payload = json.loads(inspect.stdout)[0]
+        labels = payload.get("Labels") or payload.get("Config", {}).get("Labels") or {}
+        return labels.get("io.harness.jenkins.fingerprint")
+
+    def _plugin_build_args(self) -> dict[str, str]:
+        mirrors = self.profile.jenkins.plugin_mirrors
+        configured = {
+            "JENKINS_UC": mirrors.update_center,
+            "JENKINS_UC_EXPERIMENTAL": mirrors.experimental_update_center,
+            "JENKINS_UC_DOWNLOAD": mirrors.download,
+            "JENKINS_PLUGIN_INFO": mirrors.plugin_info,
+            "JENKINS_INCREMENTALS_REPO_MIRROR": mirrors.incrementals,
+        }
+        return {name: value for name, value in configured.items() if value is not None}
+
     def _image_in_node(self) -> bool:
         provider = self.profile.runtime.provider
         result = self.kubectl.runner.run(
@@ -137,6 +220,17 @@ class JenkinsStack:
         digest.update(self.registry.image(self.profile.jenkins.image).encode())
         digest.update(self.profile.jenkins.containerfile.read_bytes())
         digest.update(self.profile.jenkins.plugins_file.read_bytes())
+        ca_certificate = self.profile.trust.ca_certificate
+        ca_fingerprint_input = (
+            ca_certificate.read_bytes() if ca_certificate is not None else b"no-private-ca"
+        )
+        digest.update(ca_fingerprint_input)
+        digest.update(
+            json.dumps(
+                self.profile.jenkins.plugin_mirrors.model_dump(),
+                sort_keys=True,
+            ).encode()
+        )
         return digest.hexdigest()
 
 
@@ -176,8 +270,19 @@ class JenkinsArtifact:
 
 
 class JenkinsClient:
-    def __init__(self, base_url: str, *, timeout: float = 30) -> None:
-        self._client = httpx.Client(base_url=base_url, timeout=timeout, follow_redirects=True)
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        timeout: float = 30,
+        verify: bool | ssl.SSLContext = True,
+    ) -> None:
+        self._client = httpx.Client(
+            base_url=base_url,
+            timeout=timeout,
+            follow_redirects=True,
+            verify=verify,
+        )
 
     def close(self) -> None:
         self._client.close()

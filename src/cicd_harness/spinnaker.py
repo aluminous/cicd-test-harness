@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import ssl
 import time
 from pathlib import Path
 from typing import Any
 
 import httpx
+import yaml
 
 from cicd_harness.command import CommandRunner
 from cicd_harness.config import HarnessProfile
@@ -13,6 +15,7 @@ from cicd_harness.errors import ReadinessError
 from cicd_harness.kind import KindCluster
 from cicd_harness.kubectl import Kubectl
 from cicd_harness.registry import RegistrySupport
+from cicd_harness.trust import inject_java_trust
 
 TERMINAL_EXECUTION_STATUSES = {
     "CANCELED",
@@ -77,7 +80,15 @@ class SpinnakerStack:
             if self._image_in_node(image):
                 continue
             if provider == "podman":
-                self.runner.run(["podman", "pull", image], timeout=900)
+                self.runner.run(
+                    [
+                        "podman",
+                        "pull",
+                        *self.registry.runtime_tls_args(provider),
+                        image,
+                    ],
+                    timeout=900,
+                )
                 digest = hashlib.sha256(image.encode()).hexdigest()[:16]
                 archive = Path("/tmp") / f"cicd-harness-{digest}.tar"
                 try:
@@ -153,7 +164,32 @@ class SpinnakerStack:
         }
         for original, configured in defaults.items():
             rendered = rendered.replace(original, configured)
-        return rendered
+        if self.profile.trust.ca_certificate is not None:
+            documents = list(yaml.safe_load_all(rendered))
+            for document in documents:
+                if document is None or document.get("kind") != "Deployment":
+                    continue
+                name = str(document.get("metadata", {}).get("name", ""))
+                if name not in {
+                    "spin-clouddriver",
+                    "spin-front50",
+                    "spin-gate",
+                    "spin-orca",
+                    "spin-rosco",
+                }:
+                    continue
+                pod_spec = document["spec"]["template"]["spec"]
+                java_containers = {
+                    str(container["name"])
+                    for container in pod_spec["containers"]
+                }
+                inject_java_trust(
+                    pod_spec,
+                    init_image=pod_spec["containers"][0]["image"],
+                    target_containers=java_containers,
+                )
+            rendered = yaml.safe_dump_all(documents, explicit_start=True, sort_keys=False)
+        return self.registry.manifest(rendered)
 
     def install(self, *, timeout: int = 900) -> None:
         self.registry.ensure_namespace(self.kubectl, self.namespace)
@@ -163,8 +199,14 @@ class SpinnakerStack:
 
 
 class SpinnakerClient:
-    def __init__(self, base_url: str, *, timeout: float = 120) -> None:
-        self._client = httpx.Client(base_url=base_url, timeout=timeout)
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        timeout: float = 120,
+        verify: bool | ssl.SSLContext = True,
+    ) -> None:
+        self._client = httpx.Client(base_url=base_url, timeout=timeout, verify=verify)
 
     def close(self) -> None:
         self._client.close()
@@ -230,8 +272,14 @@ class SpinnakerClient:
 
 
 class RoscoClient:
-    def __init__(self, base_url: str, *, timeout: float = 120) -> None:
-        self._client = httpx.Client(base_url=base_url, timeout=timeout)
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        timeout: float = 120,
+        verify: bool | ssl.SSLContext = True,
+    ) -> None:
+        self._client = httpx.Client(base_url=base_url, timeout=timeout, verify=verify)
 
     def close(self) -> None:
         self._client.close()

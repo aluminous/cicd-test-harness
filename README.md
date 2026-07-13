@@ -115,6 +115,36 @@ the same rewrite and pull-secret behavior. See
 [`docs/testing-api.md`](https://github.com/aluminous/cicd-test-harness/blob/main/docs/testing-api.md#private-registries)
 for configuration.
 
+A single optional `trust.ca_certificate` profile path adds a PEM corporate root without
+discarding public roots. The harness propagates it to host download/Git clients, a
+rootful macOS Podman VM, Kind/containerd, managed workload TLS variables, Jenkins, and
+the WireMock/Spinnaker Java trust stores. This supports private registries, Nexus, and
+HTTPS proxy origins without disabling certificate verification. Docker/DinD still needs
+its daemon trust configured before it can pull the Kind node image; see the
+[`air-gapped operation guide`](https://github.com/aluminous/cicd-test-harness/blob/main/docs/airgapped.md#private-ca-certificates).
+
+For an isolated test network where that root still cannot be used, set
+`trust.insecure_skip_tls_verify: true`. This emergency global fallback reaches
+harness-owned clients, subprocesses, managed workloads, Podman registry operations,
+Kind registries, WireMock proxy targets, and Gitea webhooks where a native bypass exists.
+It is unsafe and intentionally does not weaken Kubernetes control-plane TLS. Docker
+daemon pulls and application libraries that ignore the harness marker still require
+native configuration; the
+[`air-gap guide`](https://github.com/aluminous/cicd-test-harness/blob/main/docs/airgapped.md#emergency-tls-verification-fallback)
+has the exact boundary.
+
+For disconnected CI, enforced air-gap profiles validate every controlled bootstrap,
+image-build, and runtime destination before Kind starts, then reject public images added
+through test-authored manifests. Example modern/legacy profiles cover an internal OCI
+registry, Nexus-hosted Kind downloads, Jenkins plugin mirrors, and the legacy Istio
+source/Go build. Spinnaker's S3-compatible Front50 storage is already the in-cluster
+MinIO service and does not contact AWS. See the
+[`air-gapped operation guide`](https://github.com/aluminous/cicd-test-harness/blob/main/docs/airgapped.md).
+
+Lifecycle commands emit timed component and subprocess progress at `INFO`. Add
+`--log-level DEBUG` for captured command output or put
+`--log-file artifacts/stack-up.log` before the subcommand to retain a redacted CI log.
+
 Run one version profile explicitly with `CICD_PROFILE=modern` or
 `CICD_PROFILE=legacy`. Kubernetes 1.21 cannot start under the current rootless Podman VM,
 so the legacy profile requires a rootful Podman connection or Docker/DinD. On Apple

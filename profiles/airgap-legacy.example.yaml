@@ -1,16 +1,40 @@
-name: legacy
+name: airgap-legacy
 
 runtime:
-  # Kubernetes 1.21 requires a rootful Podman connection (or Docker/DinD).
   provider: podman
   memory_budget_mib: 8192
+
+airgap:
+  enabled: true
+  allowed_hosts:
+    - registry.airgap.example
+    - nexus.airgap.example
+
+# Uncomment after placing your PEM-encoded corporate root in the project.
+# trust:
+#   ca_certificate: certificates/corporate-ca.pem
+#   # Emergency-only fallback when the registered CA cannot be used:
+#   # insecure_skip_tls_verify: true
+
+registry:
+  rewrites:
+    docker.io: registry.airgap.example/dockerhub
+    docker.gitea.com: registry.airgap.example/gitea
+    quay.io: registry.airgap.example/quay
+    registry.k8s.io: registry.airgap.example/kubernetes
+    us-docker.pkg.dev: registry.airgap.example/spinnaker
+  credentials:
+    - server: registry.airgap.example
+      username_env: AIRGAP_REGISTRY_USERNAME
+      password_env: AIRGAP_REGISTRY_PASSWORD
 
 kind:
   version: 0.17.0
   binary: .tools/bin/kind-v0.17.0
   node_image: kindest/node:v1.21.14@sha256:9d9eb5fb26b4fbc0c6d95fa8c790414f9750dd583f5d7cee45d92e8c26670aa1
-  cluster_name: cicd-poc-legacy
+  cluster_name: cicd-airgap-legacy
   containerd_registry_mode: legacy
+  download_url_template: https://nexus.airgap.example/repository/kind/v{version}/kind-{platform}
   download_sha256:
     darwin-amd64: a4e9f4cf18ec762934f4acd68752fe085bcded3a736258de0367085525180342
     darwin-arm64: b9afee2707e711fb5d39049a361972f8c44ee7ce6145cafd0f7e4b47ceec1409
@@ -26,15 +50,18 @@ istio:
   version: 1.10.6
   chart_directory: vendor/istio/1.10.6
   arm64_pilot:
-    image: localhost/istio/pilot:1.10.6-arm64-poc
+    image: registry.airgap.example/harness/istio-pilot:1.10.6-arm64
     builder_images:
       linux/amd64: docker.io/library/golang@sha256:35fa3cfd4ec01a520f6986535d8f70a5eeef2d40fb8019ff626da24989bdd4f1
       linux/arm64: docker.io/library/golang@sha256:79e277312aa1ba8dce542a30260fea7f797c4aaf264300a7d56683aa25e4fc16
-    source_url: https://github.com/istio/istio/archive/refs/tags/1.10.6.tar.gz
+    source_url: https://nexus.airgap.example/repository/github-releases/istio/istio/archive/refs/tags/1.10.6.tar.gz
     source_sha256: c737648a6dc6b4bb3a5ac1dfc202469ced73e54c83cc591db917120c5590aae4
     git_revision: fd053c6165d21105d66dac6e3d0649db2dde5b86
     containerfile: images/istio-pilot-arm64/Containerfile
     gateway_stub_image: registry.k8s.io/pause:3.9
+    pull_before_build: true
+    go_proxy: https://nexus.airgap.example/repository/go-proxy
+    go_sumdb: "off"
   gateway:
     name: harness-gateway
     namespace: harness-system
@@ -65,7 +92,14 @@ jenkins:
   version: 2.426.1
   enabled: true
   manifest: manifests/jenkins-poc.yaml
-  image: localhost/cicd-harness/jenkins:2.426.1-pipeline
+  image: registry.airgap.example/harness/jenkins:2.426.1-pipeline
   base_image: docker.io/jenkins/jenkins:2.426.1-lts-jdk17
   containerfile: images/jenkins/Containerfile
   plugins_file: images/jenkins/plugins.txt
+  image_policy: pull-only
+  plugin_mirrors:
+    update_center: https://nexus.airgap.example/repository/jenkins-updates
+    experimental_update_center: https://nexus.airgap.example/repository/jenkins-experimental
+    download: https://nexus.airgap.example/repository/jenkins-download
+    plugin_info: https://nexus.airgap.example/repository/jenkins-updates/current/plugin-versions.json
+    incrementals: https://nexus.airgap.example/repository/jenkins-incrementals

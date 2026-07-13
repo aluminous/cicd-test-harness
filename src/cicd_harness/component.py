@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -11,6 +13,8 @@ from cicd_harness.errors import HarnessError
 from cicd_harness.kind import KindCluster
 from cicd_harness.kubectl import Kubectl
 from cicd_harness.registry import RegistrySupport
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -122,14 +126,22 @@ class ComponentGraph:
             component = self._components[name]
             self._attempted.append(name)
             self._states[name] = ComponentState.STARTING
+            started = time.monotonic()
+            logger.info("component %s: starting", name)
             try:
                 component.start(context, timeout=timeout)
             except Exception as exc:
                 self._states[name] = ComponentState.FAILED
+                logger.exception(
+                    "component %s: failed after %.1fs",
+                    name,
+                    time.monotonic() - started,
+                )
                 raise HarnessError(
                     f"environment component {name!r} failed to start: {exc}"
                 ) from exc
             self._states[name] = ComponentState.READY
+            logger.info("component %s: ready after %.1fs", name, time.monotonic() - started)
 
     def stop(self, context: EnvironmentContext) -> None:
         errors: list[str] = []
@@ -138,13 +150,17 @@ class ComponentGraph:
                 continue
             component = self._components[name]
             self._states[name] = ComponentState.STOPPING
+            started = time.monotonic()
+            logger.info("component %s: stopping", name)
             try:
                 component.stop(context)
             except Exception as exc:
                 self._states[name] = ComponentState.STOP_FAILED
+                logger.exception("component %s: teardown failed", name)
                 errors.append(f"{name}: {type(exc).__name__}: {exc}")
             else:
                 self._states[name] = ComponentState.STOPPED
+                logger.info("component %s: stopped after %.1fs", name, time.monotonic() - started)
         if errors:
             raise HarnessError("environment component teardown failed: " + "; ".join(errors))
 

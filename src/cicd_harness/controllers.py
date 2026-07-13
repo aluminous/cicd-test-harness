@@ -52,6 +52,9 @@ class ControllerStack:
             "pilot.resources.requests.cpu=50m",
             "pilot.resources.requests.memory=128Mi",
             "pilot.resources.limits.memory=512Mi",
+            # Istio probes metadata.google.internal to detect GCE. A closed
+            # loopback endpoint preserves non-GCP behavior without external DNS.
+            "pilot.env.GCE_METADATA_HOST=127.0.0.1:9",
         ]
         modern_istio = not self.profile.istio.version.startswith("1.10.")
         pilot_values.extend(
@@ -60,6 +63,10 @@ class ControllerStack:
                 modern=modern_istio,
             )
         )
+        if self.profile.trust.insecure_skip_tls_verify:
+            pilot_values.append(
+                "pilot.env.CICD_HARNESS_INSECURE_SKIP_TLS_VERIFY=1"
+            )
         native_pilot = self.profile.istio.arm64_pilot
         use_arm64_shim = native_pilot is not None and NativePilotBuilder.host_needs_shim()
         if use_arm64_shim:
@@ -87,6 +94,7 @@ class ControllerStack:
                 "gateways.istio-ingressgateway.resources.requests.cpu=25m",
                 "gateways.istio-ingressgateway.resources.requests.memory=96Mi",
                 "gateways.istio-ingressgateway.resources.limits.memory=256Mi",
+                "gateways.istio-ingressgateway.env.GCE_METADATA_HOST=127.0.0.1:9",
             ]
         else:
             gateway_values = [
@@ -96,6 +104,7 @@ class ControllerStack:
                 "resources.requests.cpu=25m",
                 "resources.requests.memory=96Mi",
                 "resources.limits.memory=256Mi",
+                "env.GCE_METADATA_HOST=127.0.0.1:9",
             ]
         gateway_values.extend(
             self.registry.gateway_image_values(
@@ -103,6 +112,15 @@ class ControllerStack:
                 modern=modern_istio,
             )
         )
+        if self.profile.trust.insecure_skip_tls_verify:
+            gateway_env = (
+                "env"
+                if modern_istio
+                else "gateways.istio-ingressgateway.env"
+            )
+            gateway_values.append(
+                f"{gateway_env}.CICD_HARNESS_INSECURE_SKIP_TLS_VERIFY=1"
+            )
         if use_arm64_shim:
             assert native_pilot is not None
             self.runner.run(
@@ -117,8 +135,10 @@ class ControllerStack:
                 timeout=timeout,
             )
             self.kubectl.apply(
-                self.gateway_stub_manifest(
-                    self.registry.image(native_pilot.gateway_stub_image)
+                self.registry.manifest(
+                    self.gateway_stub_manifest(
+                        self.registry.image(native_pilot.gateway_stub_image)
+                    )
                 )
             )
             self.kubectl.wait_available("istio-ingressgateway", "istio-system", timeout=timeout)

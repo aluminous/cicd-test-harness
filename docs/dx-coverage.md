@@ -48,9 +48,11 @@ author to manage Kind, port-forwards, component credentials, or raw polling loop
   A project-specific correlation ID should be asserted in callbacks, parameters, or
   execution payloads. Separate pytest tests must not run concurrently in one session
   because WireMock mappings/journals and Jenkins global libraries are session-global.
-- Private registries with trusted TLS and basic credentials are modeled. Private CAs,
-  insecure HTTP registries, cloud credential helpers, and short-lived token refresh are
-  not.
+- Private registries with basic credentials and one additive PEM corporate CA are
+  modeled end to end for the host harness, rootful macOS Podman, Kind/containerd,
+  Jenkins, WireMock, Spinnaker, and common workload TLS clients. Docker daemon bootstrap,
+  arbitrary Java application trust stores, insecure HTTP registries, cloud credential
+  helpers, and short-lived token refresh remain external concerns.
 - Application logs are always captured on failure, but there is no high-level streaming
   log assertion. `harness.advanced.kubectl` is the current escape hatch.
 

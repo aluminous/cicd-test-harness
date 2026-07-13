@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import platform
 import shutil
 import tarfile
@@ -13,6 +14,9 @@ from cicd_harness.command import CommandRunner
 from cicd_harness.config import HarnessProfile, NativePilotConfig
 from cicd_harness.errors import HarnessError
 from cicd_harness.registry import RegistrySupport
+from cicd_harness.trust import ssl_context, stage_ca_bundle
+
+logger = logging.getLogger(__name__)
 
 
 class NativePilotBuilder:
@@ -68,7 +72,14 @@ class NativePilotBuilder:
     def prepare(self) -> None:
         if self.config.pull_before_build and not self._local_image_exists():
             self.runner.run(
-                [self.runtime, "pull", "--platform", "linux/arm64", self.image],
+                [
+                    self.runtime,
+                    "pull",
+                    *self.registry.runtime_tls_args(self.runtime),
+                    "--platform",
+                    "linux/arm64",
+                    self.image,
+                ],
                 check=False,
                 timeout=600,
             )
@@ -95,13 +106,22 @@ class NativePilotBuilder:
 
         if not self._local_image_exists():
             raise HarnessError(f"image is not available locally: {self.image}")
-        self.runner.run([self.runtime, "push", self.image], timeout=900)
+        self.runner.run(
+            [
+                self.runtime,
+                "push",
+                *self.registry.runtime_tls_args(self.runtime),
+                self.image,
+            ],
+            timeout=900,
+        )
         return self.image
 
     def build_command(self, context: Path) -> list[str | Path]:
         return [
             self.runtime,
             "build",
+            *self.registry.runtime_tls_args(self.runtime),
             "--no-cache",
             "--platform",
             "linux/arm64",
@@ -134,16 +154,28 @@ class NativePilotBuilder:
         build.mkdir(parents=True, exist_ok=True)
         archive_path = cache / f"istio-{self.profile.istio.version}.tar.gz"
         if not archive_path.exists() or self._sha256(archive_path) != self.config.source_sha256:
+            logger.info(
+                "downloading Istio %s source from %s",
+                self.profile.istio.version,
+                self.config.source_url,
+            )
             with httpx.stream(
                 "GET",
                 self.config.source_url,
                 follow_redirects=True,
                 timeout=120,
+                verify=ssl_context(
+                    self.profile.trust.ca_certificate,
+                    insecure_skip_tls_verify=(
+                        self.profile.trust.insecure_skip_tls_verify
+                    ),
+                ),
             ) as r:
                 r.raise_for_status()
                 with archive_path.open("wb") as output:
                     for chunk in r.iter_bytes():
                         output.write(chunk)
+            logger.info("downloaded legacy Istio source to %s", archive_path)
         actual = self._sha256(archive_path)
         if actual != self.config.source_sha256:
             raise HarnessError(
@@ -179,6 +211,22 @@ class NativePilotBuilder:
             f'go build -trimpath -ldflags "{ldflags}" '
             "-o /src/out/pilot-discovery ./pilot/cmd/pilot-discovery"
         )
+        ca_bundle = stage_ca_bundle(
+            self.profile.trust,
+            self.workspace / ".tools/trust",
+        )
+        runtime_tls_args = self.registry.runtime_tls_args(self.runtime)
+        if runtime_tls_args:
+            present = self.runner.run(
+                [self.runtime, "image", "inspect", self.builder_image],
+                check=False,
+                timeout=30,
+            )
+            if present.returncode != 0:
+                self.runner.run(
+                    [self.runtime, "pull", *runtime_tls_args, self.builder_image],
+                    timeout=900,
+                )
         self.runner.run(
             [
                 self.runtime,
@@ -201,6 +249,38 @@ class NativePilotBuilder:
                 "GOOS=linux",
                 "-e",
                 "GOARCH=arm64",
+                *(
+                    (
+                        "-e",
+                        "CICD_HARNESS_INSECURE_SKIP_TLS_VERIFY=1",
+                        "-e",
+                        "GIT_SSL_NO_VERIFY=true",
+                        "-e",
+                        "GOINSECURE=*",
+                    )
+                    if self.profile.trust.insecure_skip_tls_verify
+                    else ()
+                ),
+                *(
+                    (
+                        "-v",
+                        f"{ca_bundle}:/etc/cicd-harness/ca-bundle.crt:ro",
+                        "-e",
+                        "SSL_CERT_FILE=/etc/cicd-harness/ca-bundle.crt",
+                    )
+                    if ca_bundle is not None
+                    else ()
+                ),
+                *(
+                    ("-e", f"GOPROXY={self.config.go_proxy}")
+                    if self.config.go_proxy is not None
+                    else ()
+                ),
+                *(
+                    ("-e", f"GOSUMDB={self.config.go_sumdb}")
+                    if self.config.go_sumdb is not None
+                    else ()
+                ),
                 self.builder_image,
                 "sh",
                 "-c",

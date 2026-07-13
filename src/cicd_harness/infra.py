@@ -8,6 +8,7 @@ from cicd_harness.config import HarnessProfile
 from cicd_harness.errors import HarnessError
 from cicd_harness.kubectl import Kubectl
 from cicd_harness.registry import RegistrySupport
+from cicd_harness.trust import inject_java_trust
 
 
 class InfraStack:
@@ -56,7 +57,61 @@ class InfraStack:
                 "docker.gitea.com/gitea:1.26.4-rootless",
                 self.registry.image(infra.gitea.image),
             )
-        return rendered
+        if (
+            self.profile.trust.ca_certificate is not None
+            or self.profile.trust.insecure_skip_tls_verify
+        ):
+            documents = list(yaml.safe_load_all(rendered))
+            if infra.wiremock is not None:
+                for document in documents:
+                    if (
+                        document is not None
+                        and document.get("kind") == "Deployment"
+                        and document.get("metadata", {}).get("name") == "wiremock"
+                    ):
+                        pod_spec = document["spec"]["template"]["spec"]
+                        wiremock = next(
+                            container
+                            for container in pod_spec["containers"]
+                            if container["name"] == "wiremock"
+                        )
+                        if self.profile.trust.ca_certificate is not None:
+                            inject_java_trust(
+                                pod_spec,
+                                init_image=wiremock["image"],
+                                target_containers={"wiremock"},
+                            )
+            if (
+                self.profile.trust.insecure_skip_tls_verify
+                and infra.gitea is not None
+            ):
+                for document in documents:
+                    if (
+                        document is not None
+                        and document.get("kind") == "Deployment"
+                        and document.get("metadata", {}).get("name") == "gitea"
+                    ):
+                        gitea = next(
+                            container
+                            for container in document["spec"]["template"]["spec"][
+                                "containers"
+                            ]
+                            if container["name"] == "gitea"
+                        )
+                        environment = list(gitea.get("env") or [])
+                        if not any(
+                            item.get("name") == "GITEA__webhook__SKIP_TLS_VERIFY"
+                            for item in environment
+                        ):
+                            environment.append(
+                                {
+                                    "name": "GITEA__webhook__SKIP_TLS_VERIFY",
+                                    "value": "true",
+                                }
+                            )
+                        gitea["env"] = environment
+            rendered = yaml.safe_dump_all(documents, explicit_start=True, sort_keys=False)
+        return self.registry.manifest(rendered)
 
     def install(self, *, timeout: int = 300) -> None:
         if self.profile.infra is None:

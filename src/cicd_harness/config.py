@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -15,6 +16,31 @@ class StrictModel(BaseModel):
 class RuntimeConfig(StrictModel):
     provider: str = "docker"
     memory_budget_mib: int = Field(default=8192, ge=1024, le=16384)
+
+
+class AirgapConfig(StrictModel):
+    """Network destinations the harness may use when disconnected."""
+
+    enabled: bool = False
+    allowed_hosts: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def require_allowlist(self) -> AirgapConfig:
+        if self.enabled and not self.allowed_hosts:
+            raise ValueError("airgap.allowed_hosts must not be empty when air-gap mode is enabled")
+        for host in self.allowed_hosts:
+            if "://" in host or "/" in host or not host.strip():
+                raise ValueError(
+                    "airgap allowed hosts must be hostnames with optional ports or a leading *."
+                )
+        return self
+
+
+class TrustConfig(StrictModel):
+    """TLS trust and emergency fallback shared by controlled clients and workloads."""
+
+    ca_certificate: Path | None = None
+    insecure_skip_tls_verify: bool = False
 
 
 class RegistryCredentialConfig(StrictModel):
@@ -50,7 +76,11 @@ class KindConfig(StrictModel):
     binary: Path
     node_image: str
     cluster_name: str
+    containerd_registry_mode: Literal["auto", "hosts", "legacy"] = "auto"
     wait_seconds: int = Field(default=180, ge=30)
+    download_url_template: str = (
+        "https://kind.sigs.k8s.io/dl/v{version}/kind-{platform}"
+    )
     download_sha256: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -76,6 +106,19 @@ class KindConfig(StrictModel):
                 raise ValueError(f"invalid Kind sha256 checksum for {platform}")
         return self
 
+    @model_validator(mode="after")
+    def validate_download_url_template(self) -> KindConfig:
+        try:
+            self.download_url_template.format(
+                version=self.version,
+                platform="linux-amd64",
+            )
+        except (KeyError, ValueError) as exc:
+            raise ValueError(
+                "kind.download_url_template may only use {version} and {platform}"
+            ) from exc
+        return self
+
 
 class ArgoRolloutsConfig(StrictModel):
     version: str
@@ -98,6 +141,8 @@ class NativePilotConfig(StrictModel):
     containerfile: Path
     gateway_stub_image: str = "registry.k8s.io/pause:3.9"
     pull_before_build: bool = False
+    go_proxy: str | None = None
+    go_sumdb: str | None = None
 
     @model_validator(mode="after")
     def require_builder_platforms(self) -> NativePilotConfig:
@@ -108,6 +153,9 @@ class NativePilotConfig(StrictModel):
                 "native pilot builder images are missing platforms: "
                 + ", ".join(sorted(missing))
             )
+        for name, value in (("go_proxy", self.go_proxy), ("go_sumdb", self.go_sumdb)):
+            if value is not None and not value.strip():
+                raise ValueError(f"arm64_pilot.{name} must not be empty")
         return self
 
 
@@ -152,6 +200,16 @@ class SpinnakerConfig(StrictModel):
     images: SpinnakerImagesConfig
 
 
+class JenkinsPluginMirrorsConfig(StrictModel):
+    """jenkins-plugin-cli download roots, commonly backed by Nexus raw proxies."""
+
+    update_center: str | None = None
+    experimental_update_center: str | None = None
+    download: str | None = None
+    plugin_info: str | None = None
+    incrementals: str | None = None
+
+
 class JenkinsConfig(StrictModel):
     version: str = "2.426.1"
     enabled: bool = True
@@ -160,11 +218,17 @@ class JenkinsConfig(StrictModel):
     base_image: str
     containerfile: Path
     plugins_file: Path
+    image_policy: Literal["build-if-missing", "pull-or-build", "pull-only"] = (
+        "build-if-missing"
+    )
+    plugin_mirrors: JenkinsPluginMirrorsConfig = JenkinsPluginMirrorsConfig()
 
 
 class HarnessProfile(StrictModel):
     name: str
     runtime: RuntimeConfig
+    airgap: AirgapConfig = AirgapConfig()
+    trust: TrustConfig = TrustConfig()
     registry: RegistryConfig = RegistryConfig()
     kind: KindConfig
     argo_rollouts: ArgoRolloutsConfig | None = None
@@ -177,6 +241,7 @@ class HarnessProfile(StrictModel):
 def _resolve_paths(profile: HarnessProfile, root: Path) -> HarnessProfile:
     data = profile.model_dump()
     for section, key in (
+        ("trust", "ca_certificate"),
         ("kind", "binary"),
         ("argo_rollouts", "install_manifest"),
         ("argo_rollouts", "notifications_manifest"),

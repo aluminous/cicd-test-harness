@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import ssl
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -301,8 +302,14 @@ class ProxyService(MockService):
 
 
 class WireMockClient:
-    def __init__(self, admin_url: str, *, timeout: float = 10) -> None:
-        self._client = httpx.Client(base_url=admin_url, timeout=timeout)
+    def __init__(
+        self,
+        admin_url: str,
+        *,
+        timeout: float = 10,
+        verify: bool | ssl.SSLContext = True,
+    ) -> None:
+        self._client = httpx.Client(base_url=admin_url, timeout=timeout, verify=verify)
         self.expectations: list[Expectation] = []
 
     def close(self) -> None:

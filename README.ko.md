@@ -119,6 +119,39 @@ pull secret 동작을 상속합니다. 설정 방법은
 [`docs/testing-api.md`](https://github.com/aluminous/cicd-test-harness/blob/main/docs/testing-api.md#private-registries)를
 참조하십시오.
 
+선택적인 단일 `trust.ca_certificate` 프로필 경로를 사용하면 공개 root를 유지하면서
+PEM 형식의 사내 root CA를 추가할 수 있습니다. 하네스는 이 CA를 호스트 다운로드/Git
+클라이언트, macOS의 rootful Podman VM, Kind/containerd, 관리되는 workload의 TLS 환경
+변수, Jenkins, WireMock/Spinnaker Java trust store에 전달합니다. 따라서 인증서 검증을
+끄지 않고도 사설 registry, Nexus 및 HTTPS proxy origin을 사용할 수 있습니다.
+Docker/DinD daemon은 Kind node 이미지를 pull하기 전에 별도로 CA를 신뢰하도록 설정해야
+합니다. 자세한 내용은
+[`air-gap 운영 가이드`](https://github.com/aluminous/cicd-test-harness/blob/main/docs/airgapped.md#private-ca-certificates)를
+참조하십시오.
+
+격리된 테스트 네트워크에서 등록한 root를 사용할 수 없는 경우에는 긴급 전역
+fallback인 `trust.insecure_skip_tls_verify: true`를 설정할 수 있습니다. 네이티브 우회
+기능이 있는 하네스 클라이언트와 subprocess, 관리 workload, Podman registry 작업,
+Kind registry, WireMock proxy target, Gitea webhook에 이 설정이 전달됩니다. 이 옵션은
+안전하지 않으며 Kubernetes control-plane TLS를 약화시키지 않습니다. Docker daemon
+pull과 하네스 marker를 무시하는 애플리케이션 라이브러리는 여전히 자체 설정이
+필요합니다. 정확한 범위는
+[`air-gap 운영 가이드`](https://github.com/aluminous/cicd-test-harness/blob/main/docs/airgapped.md#emergency-tls-verification-fallback)를
+참조하십시오.
+
+인터넷이 차단된 CI에서는 강제 air-gap 프로필이 Kind 시작 전에 bootstrap, 이미지 빌드,
+런타임 대상 전체를 검사하고 테스트 매니페스트가 추가한 공개 이미지를 거부합니다.
+modern/legacy 예제 프로필에는 내부 OCI 레지스트리, Nexus의 Kind 바이너리, Jenkins
+plugin mirror, 레거시 Istio 소스 및 Go module proxy 설정이 포함되어 있습니다.
+Spinnaker Front50의 S3 호환 저장소는 이미 클러스터 내부 MinIO이므로 AWS에 연결하지
+않습니다. 자세한 내용은
+[`air-gap 운영 가이드`](https://github.com/aluminous/cicd-test-harness/blob/main/docs/airgapped.md)를
+참조하십시오.
+
+생명주기 명령은 기본 `INFO` 수준에서 구성 요소 및 하위 프로세스의 진행 시간과 상태를
+출력합니다. 캡처된 명령 출력에는 `--log-level DEBUG`를 사용하고, 정리된 CI 로그를
+보존하려면 하위 명령 앞에 `--log-file artifacts/stack-up.log`를 추가하십시오.
+
 특정 버전 프로필은 `CICD_PROFILE=modern` 또는 `CICD_PROFILE=legacy`로 명시적으로
 선택할 수 있습니다. Kubernetes 1.21은 현재 rootless Podman VM에서 시작할 수 없으므로
 레거시 프로필에는 rootful Podman 연결 또는 Docker/DinD가 필요합니다. Apple Silicon에서는
